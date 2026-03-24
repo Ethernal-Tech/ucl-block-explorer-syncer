@@ -41,11 +41,10 @@ CREATE TABLE IF NOT EXISTS chain.transactions (
     data_method     VARCHAR(10),
     type            SMALLINT,
     chain_id        VARCHAR(50),
-    status          VARCHAR(10) DEFAULT NULL
-                                CHECK (status IS NULL OR status IN ('pending', 'queued', 'success', 'failed')),
+    status          VARCHAR(10) CHECK (status IN ('committed','pending', 'queued', 'success', 'failed')),
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP,
-    block_timestamp BIGINT,
+    block_timestamp BIGINT DEFAULT 0,
     CONSTRAINT transactions_hash_unique UNIQUE (hash)
 );
 

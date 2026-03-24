@@ -95,9 +95,9 @@ func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 	}
 
 	if len(block.Transactions) > 0 {
-		paramsPerRow := 4
+		paramsPerRow := 5
 		if h.withTxs {
-			paramsPerRow = 16
+			paramsPerRow = 17
 		}
 
 		chunkSize := 65535 / paramsPerRow
@@ -106,7 +106,7 @@ func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 			end := min(i+chunkSize, len(block.Transactions))
 			chunk := block.Transactions[i:end]
 
-			if err := h.batchInsertTransactionsWithoutStatus(tx, chunk); err != nil {
+			if err := h.batchInsertCommittedTransactions(tx, chunk); err != nil {
 				return err
 			}
 		}
@@ -171,7 +171,7 @@ func (h *PgStorageHandler) setTxWorkerLastBlockProcessed(tx *sql.Tx, blockNumber
 	return nil
 }
 
-func (h *PgStorageHandler) batchInsertTransactionsWithoutStatus(tx *sql.Tx, txs []*types.Transaction) error {
+func (h *PgStorageHandler) batchInsertCommittedTransactions(tx *sql.Tx, txs []*types.Transaction) error {
 	var (
 		placeholders []string
 		args         []any
@@ -198,10 +198,10 @@ func (h *PgStorageHandler) batchInsertTransactionsWithoutStatus(tx *sql.Tx, txs 
 
 		if h.withTxs {
 			placeholders = append(placeholders, fmt.Sprintf(
-				"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+				"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5,
 				argIdx+6, argIdx+7, argIdx+8, argIdx+9, argIdx+10, argIdx+11,
-				argIdx+12, argIdx+13, argIdx+14, argIdx+15,
+				argIdx+12, argIdx+13, argIdx+14, argIdx+15, argIdx+16,
 			))
 
 			args = append(args,
@@ -221,13 +221,14 @@ func (h *PgStorageHandler) batchInsertTransactionsWithoutStatus(tx *sql.Tx, txs 
 				dataMethod,
 				uint64(t.Type),
 				bigToStringFn(t.ChainID),
+				"committed",
 			)
 
-			argIdx += 16
+			argIdx += 17
 		} else {
 			placeholders = append(placeholders, fmt.Sprintf(
-				"($%d,$%d,$%d,$%d)",
-				argIdx, argIdx+1, argIdx+2, argIdx+3,
+				"($%d,$%d,$%d,$%d,$%d)",
+				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4,
 			))
 
 			args = append(args,
@@ -235,9 +236,10 @@ func (h *PgStorageHandler) batchInsertTransactionsWithoutStatus(tx *sql.Tx, txs 
 				*t.BlockHash,
 				uint64(*t.BlockNumber),
 				uint64(*t.BlockTimestamp),
+				"committed",
 			)
 
-			argIdx += 4
+			argIdx += 5
 		}
 	}
 
@@ -248,27 +250,27 @@ func (h *PgStorageHandler) batchInsertTransactionsWithoutStatus(tx *sql.Tx, txs 
 			INSERT INTO chain.transactions (
 				hash, block_hash, block_number, block_timestamp, from_address, to_address,
 				value, nonce, gas_limit, gas_price, gas_fee_cap, gas_tip_cap,
-				data, data_method, type, chain_id
+				data, data_method, type, chain_id, status
 			) VALUES ` + strings.Join(placeholders, ", ") + `
 			ON CONFLICT (hash) DO UPDATE
     		SET
     		    block_hash      = EXCLUDED.block_hash,
     		    block_number    = EXCLUDED.block_number,
     		    block_timestamp = EXCLUDED.block_timestamp,
-    		    status          = NULL,
+    		    status          = EXCLUDED.status,
     		    updated_at      = NOW()
 		`
 	} else {
 		query = `
 			INSERT INTO chain.transactions (
-				hash, block_hash, block_number, block_timestamp
+				hash, block_hash, block_number, block_timestamp, status
 			) VALUES ` + strings.Join(placeholders, ", ") + `
 			ON CONFLICT (hash) DO UPDATE
     		SET
     		    block_hash      = EXCLUDED.block_hash,
     		    block_number    = EXCLUDED.block_number,
     		    block_timestamp = EXCLUDED.block_timestamp,
-    		    status          = NULL,
+    		    status          = EXCLUDED.status,
     		    updated_at      = NOW()
 		`
 	}
