@@ -2,7 +2,6 @@ package txworker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -255,8 +254,7 @@ func (w *TxWorker) fetchBatch(batch *[]rpc.BatchElem, elem rpc.BatchElem) error 
 	return nil
 }
 
-// sendBatch executes the batch RPC call, retrying on transport failure or per-element JSON-RPC
-// errors up to maxRetries attempts (same semantics as block worker retry loops).
+// sendBatch executes the batch RPC call, retrying on failure up to maxRetries times.
 func (w *TxWorker) sendBatch(batch []rpc.BatchElem) error {
 	for i := int64(1); ; i++ {
 		if err := w.client.BatchCallContext(context.TODO(), batch); err != nil {
@@ -274,26 +272,11 @@ func (w *TxWorker) sendBatch(batch []rpc.BatchElem) error {
 			continue
 		}
 
-		var elemErrs []error
+		// This should never happen! Log and continue.
 		for _, elem := range batch {
 			if elem.Error != nil {
-				elemErrs = append(elemErrs, fmt.Errorf("%s for %v: %w", elem.Method, elem.Args[0], elem.Error))
+				w.log("%s RPC call failed for %v: %v", elem.Method, elem.Args[0], elem.Error)
 			}
-		}
-
-		if len(elemErrs) > 0 {
-			combined := errors.Join(elemErrs...)
-			w.log("(batch) RPC sub-calls failed: %v", combined)
-
-			if i == w.maxRetries {
-				w.log("giving up...")
-
-				return combined
-			}
-
-			time.Sleep(time.Duration(w.retryInterval))
-
-			continue
 		}
 
 		return nil
