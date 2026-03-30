@@ -21,18 +21,11 @@ var (
 )
 
 var syncerCommand = &cobra.Command{
-	Use:   "syncer",
-	Short: "Indexes blocks and transactions from an EVM-compatible node into PostgreSQL.",
-	Long:  doc,
-	RunE:  execute,
-}
-
-func Execute() {
-	setRequiredFlags()
-
-	setOptionalFlags()
-
-	syncerCommand.Execute()
+	Use:     "sync",
+	Aliases: []string{"syncer"},
+	Short:   "Indexes blocks and transactions from an EVM-compatible node into PostgreSQL.",
+	Long:    doc,
+	RunE:    execute,
 }
 
 func setRequiredFlags() {

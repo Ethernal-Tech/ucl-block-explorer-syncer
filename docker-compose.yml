@@ -1,0 +1,60 @@
+# One image: only `syncer` runs `build`. `api` reuses `image: ucl-block-explorer-syncer:latest`
+# so Docker does not race two exports to the same tag ("already exists").
+x-app-build: &app-build
+  build: .
+  image: ucl-block-explorer-syncer:latest
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: explorer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d explorer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  syncer:
+    <<: *app-build
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Override in .env: RPC_URL=http://your-node:8545 (default targets host machine from the container)
+    command:
+      - "sync"
+      - "--rpc-url"
+      - "${RPC_URL:-http://host.docker.internal:8545}"
+      - "--db-conn"
+      - "postgres://postgres:postgres@postgres:5432/explorer?sslmode=disable"
+      - "--logging"
+      - "--tip-only"
+
+  # Same image as syncer; no `build` here (avoids duplicate export of the same tag).
+  api:
+    image: ucl-block-explorer-syncer:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8545:8545"
+    command:
+      - "api"
+      - "--listen"
+      - "0.0.0.0:8545"
+      - "--db-conn"
+      - "postgres://postgres:postgres@postgres:5432/explorer?sslmode=disable"
+
+volumes:
+  postgres_data:
