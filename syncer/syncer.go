@@ -420,13 +420,6 @@ func (s *Syncer) Start() error {
 
 			if currentBlock >= s.bwHandle.startBlock {
 				block = s.getBlock()
-				if block == nil {
-					// getBlock returns nil when shutDownTXW is closed (shutdown while waiting for a
-					// queued block). Finish the same teardown as case <-s.shutDownTXW below.
-					shutDownFn(0)
-
-					break break_for
-				}
 			} else {
 				block, err = s.storage.GetBlock(currentBlock)
 
