@@ -556,6 +556,10 @@ func (s *Syncer) shutDown() {
 		handle.client.Close()
 	}
 
+	if s.txpwHandle != nil {
+		s.txpwHandle.client.Close()
+	}
+
 	s.log("shut down")
 }
 
