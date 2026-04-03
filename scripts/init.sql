@@ -65,3 +65,57 @@ CREATE INDEX IF NOT EXISTS idx_transactions_status ON chain.transactions(status)
 
 CREATE INDEX IF NOT EXISTS idx_transactions_sort ON chain.transactions (block_number DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_hash_lookup ON chain.transactions USING HASH (hash);
+
+-- ERC-20 monitoring: token contracts to aggregate Transfer logs for (syncer --erc20-stats).
+CREATE TABLE IF NOT EXISTS chain.erc20_watchlist (
+    address VARCHAR(42) PRIMARY KEY,
+    symbol VARCHAR(32),
+    decimals SMALLINT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP
+);
+
+-- Per-token UTC-hour aggregates (mint/burn/transfer from standard Transfer events). hour_utc = start of hour in UTC.
+CREATE TABLE IF NOT EXISTS chain.erc20_hourly_stats (
+    token_address VARCHAR(42) NOT NULL,
+    hour_utc TIMESTAMPTZ NOT NULL,
+    transfer_count BIGINT NOT NULL DEFAULT 0,
+    transfer_volume_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
+    mint_count BIGINT NOT NULL DEFAULT 0,
+    mint_volume_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
+    burn_count BIGINT NOT NULL DEFAULT 0,
+    burn_volume_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (token_address, hour_utc)
+);
+
+CREATE INDEX IF NOT EXISTS idx_erc20_hourly_stats_hour ON chain.erc20_hourly_stats(hour_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_erc20_hourly_stats_token ON chain.erc20_hourly_stats(token_address);
+
+-- Cached end-of-hour cumulative circulation (human units, all enabled watchlist tokens). TRUNCATE after historical reindex if needed.
+CREATE TABLE IF NOT EXISTS chain.erc20_circulation_cumulative (
+    hour_utc TIMESTAMPTZ PRIMARY KEY,
+    cumulative_total NUMERIC NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_erc20_circulation_cumulative_hour ON chain.erc20_circulation_cumulative(hour_utc DESC);
+
+-- Adoption analytics (syncer --entity-stats): unique EOA addresses per UTC hour (from/to; contracts excluded via eth_getCode).
+CREATE TABLE IF NOT EXISTS chain.entity_hour_participation (
+    hour_utc TIMESTAMPTZ NOT NULL,
+    address VARCHAR(42) NOT NULL,
+    PRIMARY KEY (hour_utc, address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_hour_participation_hour ON chain.entity_hour_participation(hour_utc DESC);
+
+-- Earliest UTC hour we observed each EOA (contracts never inserted — eth_getCode non-empty at sighting block).
+CREATE TABLE IF NOT EXISTS chain.eoa_first_seen (
+    address VARCHAR(42) PRIMARY KEY,
+    first_seen_hour_utc TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_eoa_first_seen_hour ON chain.eoa_first_seen(first_seen_hour_utc DESC);

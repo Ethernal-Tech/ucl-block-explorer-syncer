@@ -39,6 +39,15 @@ services:
       - "postgres://postgres:postgres@postgres:5432/explorer?sslmode=disable"
       - "--logging"
       - "--tip-only"
+      - "--tx-workers"
+      - "${TX_WORKERS:-8}"
+      - "--full-block"
+      - "--erc20-stats"
+      - "--erc20-stats-buffer"
+      - "${ERC20_STATS_BUFFER:-64}"
+      - "--entity-stats"
+      - "--entity-stats-buffer"
+      - "${ENTITY_STATS_BUFFER:-64}"
 
   # Same image as syncer; no `build` here (avoids duplicate export of the same tag).
   api:
@@ -49,6 +58,9 @@ services:
         condition: service_healthy
     ports:
       - "8545:8545"
+    environment:
+      # Set in .env to enable POST /admin/v1/erc20/watchlist (Bearer token).
+      ADMIN_API_SECRET: ${ADMIN_API_SECRET:-}
     command:
       - "api"
       - "--listen"

@@ -2,13 +2,18 @@ package syncer
 
 import (
 	"container/list"
+	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
 
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
+	entitystatsworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/entity_stats_worker"
+	erc20worker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/erc20_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	txworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/tx_worker"
 	txpoolworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/txpool_worker"
@@ -176,6 +181,16 @@ type Syncer struct {
 	// while holding mClosed, as channels can only be closed once.
 	closed  bool
 	mClosed sync.Mutex
+
+	// Optional ERC-20 daily stats (see [WithErc20Stats]); nil when disabled.
+	erc20DB      *sql.DB
+	erc20StatsCh chan erc20worker.BlockJob
+	erc20Wg      sync.WaitGroup
+
+	// Optional entity / adoption stats (see [WithEntityStats]); nil when disabled.
+	entityDB      *sql.DB
+	entityStatsCh chan entitystatsworker.BlockJob
+	entityWg      sync.WaitGroup
 }
 
 // NewSyncer constructs a new [Syncer] instance. rpcURL must be a valid RPC endpoint URL used
@@ -193,6 +208,8 @@ type Syncer struct {
 //  8. WithRetry (default: first failure is treated as fatal)
 //  9. WithBatchSize (default: 1)
 //  10. WithMaxTxWorkers (default: 1)
+//  11. WithErc20Stats (default: disabled)
+//  12. WithEntityStats (default: disabled)
 func NewSyncer(
 	rpcURL string,
 	storage StorageHandler,
@@ -337,6 +354,43 @@ func (s *Syncer) Start() error {
 
 	s.log("started")
 
+	if s.erc20StatsCh != nil && s.erc20DB != nil {
+		s.erc20Wg.Add(1)
+
+		go func() {
+			defer s.erc20Wg.Done()
+
+			for job := range s.erc20StatsCh {
+				if err := erc20worker.ProcessBlock(context.Background(), s.erc20DB, job); err != nil {
+					s.log("erc20 stats: %v", err.Error())
+				}
+			}
+		}()
+	}
+
+	if s.entityStatsCh != nil && s.entityDB != nil {
+		s.entityWg.Add(1)
+
+		go func() {
+			defer s.entityWg.Done()
+
+			ec, err := ethclient.Dial(s.rpcURL)
+			if err != nil {
+				s.log("entity stats ethclient: %v", err.Error())
+				for range s.entityStatsCh {
+				}
+				return
+			}
+			defer ec.Close()
+
+			for job := range s.entityStatsCh {
+				if err := entitystatsworker.ProcessBlock(context.Background(), s.entityDB, ec, job); err != nil {
+					s.log("entity stats: %v", err.Error())
+				}
+			}
+		}()
+	}
+
 	wg := sync.WaitGroup{}
 
 	if s.syncTxPool {
@@ -387,6 +441,13 @@ func (s *Syncer) Start() error {
 	//    initiates a graceful shutdown of all transaction workers.
 	go func() {
 		defer wg.Done()
+
+		if s.erc20StatsCh != nil {
+			defer close(s.erc20StatsCh)
+		}
+		if s.entityStatsCh != nil {
+			defer close(s.entityStatsCh)
+		}
 
 		// shutDownFn signals the transaction workers (by closing their job channels) and the
 		// other two worker controllers (by closing their shutDown channels) to shut down, and
@@ -496,6 +557,34 @@ func (s *Syncer) Start() error {
 				break
 			}
 
+			if s.erc20StatsCh != nil {
+				job := erc20worker.BlockJob{
+					BlockNumber: uint64(block.Number),
+					BlockTS:     uint64(block.Timestamp),
+					Txs:         block.Transactions,
+				}
+
+				select {
+				case s.erc20StatsCh <- job:
+				default:
+					s.log("erc20 stats queue full, dropped block %d", currentBlock)
+				}
+			}
+
+			if s.entityStatsCh != nil {
+				job := entitystatsworker.BlockJob{
+					BlockNumber: uint64(block.Number),
+					BlockTS:     uint64(block.Timestamp),
+					Txs:         block.Transactions,
+				}
+
+				select {
+				case s.entityStatsCh <- job:
+				default:
+					s.log("entity stats queue full, dropped block %d", currentBlock)
+				}
+			}
+
 			s.log("block %v processed", currentBlock)
 
 			currentBlock++
@@ -530,6 +619,9 @@ func (s *Syncer) Start() error {
 	}
 
 	wg.Wait()
+
+	s.erc20Wg.Wait()
+	s.entityWg.Wait()
 
 	return nil
 }

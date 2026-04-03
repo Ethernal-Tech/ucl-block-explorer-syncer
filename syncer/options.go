@@ -1,8 +1,11 @@
 package syncer
 
 import (
+	"database/sql"
 	"fmt"
 
+	erc20worker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/erc20_worker"
+	entitystatsworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/entity_stats_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 )
 
@@ -143,6 +146,44 @@ func WithMaxTxWorkers(maxTxWorkers uint64) SyncerOption {
 		}
 
 		s.maxTxWorkers = maxTxWorkers
+
+		return nil
+	}
+}
+
+// WithErc20Stats enables asynchronous ERC-20 Transfer aggregation after each committed block.
+// db must remain open for the syncer lifetime. buffer is the bounded queue depth; if zero, 64 is used.
+// When the queue is full, blocks are dropped and logged (indexing never blocks).
+func WithErc20Stats(db *sql.DB, buffer uint) SyncerOption {
+	return func(s *Syncer) error {
+		if db == nil {
+			return fmt.Errorf("erc20 stats database handle cannot be nil")
+		}
+		if buffer == 0 {
+			buffer = 64
+		}
+
+		s.erc20DB = db
+		s.erc20StatsCh = make(chan erc20worker.BlockJob, buffer)
+
+		return nil
+	}
+}
+
+// WithEntityStats enables asynchronous adoption-entity stats after each committed block
+// (per-day unique participants + first-seen EOA via eth_getCode). db must stay open for the
+// syncer lifetime. buffer is the bounded queue depth; if zero, 64 is used.
+func WithEntityStats(db *sql.DB, buffer uint) SyncerOption {
+	return func(s *Syncer) error {
+		if db == nil {
+			return fmt.Errorf("entity stats database handle cannot be nil")
+		}
+		if buffer == 0 {
+			buffer = 64
+		}
+
+		s.entityDB = db
+		s.entityStatsCh = make(chan entitystatsworker.BlockJob, buffer)
 
 		return nil
 	}

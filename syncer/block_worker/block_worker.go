@@ -278,7 +278,7 @@ func (w *BlockWorker) Start() error {
 // shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [BlockWorker.errCh].
 func (w *BlockWorker) shutDown(err error) {
 	if err != nil {
-		w.log(err.Error())
+		w.log("%s", err.Error())
 
 		w.errCh <- err
 	}

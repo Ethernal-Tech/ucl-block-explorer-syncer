@@ -39,6 +39,11 @@ func (h *PgStorageHandler) Shutdown() error {
 	return nil
 }
 
+// DB returns the underlying PostgreSQL handle for optional features (e.g. ERC-20 stats worker).
+func (h *PgStorageHandler) DB() *sql.DB {
+	return h.db
+}
+
 func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 	tx, err := h.db.Begin()
 	if err != nil {
