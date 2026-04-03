@@ -151,3 +151,80 @@ func (e *Explorer) GetBlockTransactionCount(blockNumber string) (interface{}, er
 
 	return response, nil
 }
+
+// GetErc20DailyStats returns paginated UTC-day ERC-20 aggregates (mint/burn/transfer from event logs).
+func (e *Explorer) GetErc20DailyStats(req *api_storage.Erc20DailyStatsRequest) (interface{}, error) {
+	if req == nil {
+		req = &api_storage.Erc20DailyStatsRequest{
+			Page:     1,
+			PageSize: 50,
+		}
+	}
+
+	response, err := api_storage.GetErc20DailyStats(*req)
+	if err != nil {
+		e.logf("failed to get ERC-20 daily stats: %v", err)
+		return nil, err
+	}
+
+	return response, nil
+}
+
+// GetErc20CirculationCumulative returns paginated ascending UTC-day cumulative circulation (all watchlisted tokens, human units).
+func (e *Explorer) GetErc20CirculationCumulative(req *api_storage.Erc20CirculationCumulativeRequest) (interface{}, error) {
+	if req == nil {
+		req = &api_storage.Erc20CirculationCumulativeRequest{
+			Page:     1,
+			PageSize: 50,
+		}
+	}
+	response, err := api_storage.GetErc20CirculationCumulativeStats(*req)
+	if err != nil {
+		e.logf("failed to get ERC-20 circulation cumulative: %v", err)
+		return nil, err
+	}
+	return response, nil
+}
+
+// GetActiveEntityDailyStats returns paginated unique transacting addresses per UTC day.
+func (e *Explorer) GetActiveEntityDailyStats(req *api_storage.EntityDailyStatsRequest) (interface{}, error) {
+	if req == nil {
+		req = &api_storage.EntityDailyStatsRequest{
+			Page:     1,
+			PageSize: 50,
+		}
+	}
+	response, err := api_storage.GetActiveEntityDailyStats(*req)
+	if err != nil {
+		e.logf("failed to get active entity daily stats: %v", err)
+		return nil, err
+	}
+	return response, nil
+}
+
+// GetOnboardingEntityDailyStats returns paginated new EOA counts per UTC day.
+func (e *Explorer) GetOnboardingEntityDailyStats(req *api_storage.EntityDailyStatsRequest) (interface{}, error) {
+	if req == nil {
+		req = &api_storage.EntityDailyStatsRequest{
+			Page:     1,
+			PageSize: 50,
+		}
+	}
+	response, err := api_storage.GetOnboardingEntityDailyStats(*req)
+	if err != nil {
+		e.logf("failed to get onboarding entity daily stats: %v", err)
+		return nil, err
+	}
+	return response, nil
+}
+
+// GetErc20Watchlist returns token contracts configured for ERC-20 stats indexing.
+func (e *Explorer) GetErc20Watchlist() (interface{}, error) {
+	response, err := api_storage.GetErc20Watchlist()
+	if err != nil {
+		e.logf("failed to get ERC-20 watchlist: %v", err)
+		return nil, err
+	}
+
+	return response, nil
+}

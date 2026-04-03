@@ -217,7 +217,7 @@ func (w *TxWorker) Start() error {
 // shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [TxWorker.errCh].
 func (w *TxWorker) shutDown(err error) {
 	if err != nil {
-		w.log(err.Error())
+		w.log("%s", err.Error())
 
 		w.errCh <- struct {
 			Err error
