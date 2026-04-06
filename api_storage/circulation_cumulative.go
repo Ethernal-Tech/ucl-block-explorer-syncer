@@ -163,46 +163,81 @@ func ensureCirculationCacheThroughLastCompleteHour(conn *sql.DB) error {
 	return nil
 }
 
+// hourlyNetHumanSelect lists per-token raw mint/burn for one UTC hour (same join as circulation).
+const hourlyNetHumanSelect = `
+SELECT s.mint_volume_raw::text, s.burn_volume_raw::text, w.decimals::smallint
+FROM chain.erc20_hourly_stats s
+INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+WHERE w.enabled = true
+  AND w.decimals IS NOT NULL
+  AND s.hour_utc = $1::timestamptz
+`
+
+// ratFromMintBurnRaw returns (mint_volume_raw - burn_volume_raw) / 10^decimals in exact rationals.
+func ratFromMintBurnRaw(mintRaw, burnRaw string, dec int16) (*big.Rat, error) {
+	if dec < 0 || dec > 78 {
+		return nil, fmt.Errorf("invalid decimals %d", dec)
+	}
+	mint := new(big.Int)
+	if _, ok := mint.SetString(strings.TrimSpace(mintRaw), 10); !ok {
+		return nil, fmt.Errorf("mint_volume_raw: %q", mintRaw)
+	}
+	burn := new(big.Int)
+	if _, ok := burn.SetString(strings.TrimSpace(burnRaw), 10); !ok {
+		return nil, fmt.Errorf("burn_volume_raw: %q", burnRaw)
+	}
+	diff := new(big.Int).Sub(mint, burn)
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(dec)), nil)
+	return new(big.Rat).SetFrac(diff, scale), nil
+}
+
+// sumHourlyNetHumanRows sums per-token hourly human nets. Burn may exceed mint for a token or in total.
+func sumHourlyNetHumanRows(rows *sql.Rows) (*big.Rat, error) {
+	total := new(big.Rat)
+	for rows.Next() {
+		var mintRaw, burnRaw string
+		var dec int16
+		if err := rows.Scan(&mintRaw, &burnRaw, &dec); err != nil {
+			return nil, err
+		}
+		row, err := ratFromMintBurnRaw(mintRaw, burnRaw, dec)
+		if err != nil {
+			return nil, err
+		}
+		total.Add(total, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return total, nil
+}
+
 func queryHourlyNetHumanTx(tx *sql.Tx, hourUTC time.Time) (*big.Rat, error) {
-	var s sql.NullString
-	err := tx.QueryRow(`
-		SELECT COALESCE(SUM(
-			(s.mint_volume_raw - s.burn_volume_raw) / power(10::numeric, w.decimals)
-		), 0)::text
-		FROM chain.erc20_hourly_stats s
-		INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
-		WHERE w.enabled = true
-		  AND w.decimals IS NOT NULL
-		  AND s.hour_utc = $1::timestamptz
-	`, hourUTC.UTC().Format(time.RFC3339)).Scan(&s)
+	h := hourUTC.UTC().Format(time.RFC3339)
+	rows, err := tx.Query(hourlyNetHumanSelect, h)
 	if err != nil {
-		return nil, fmt.Errorf("hourly net %s: %w", hourUTC.UTC().Format(time.RFC3339), err)
+		return nil, fmt.Errorf("hourly net %s: %w", h, err)
 	}
-	if !s.Valid {
-		return new(big.Rat), nil
+	defer rows.Close()
+	total, err := sumHourlyNetHumanRows(rows)
+	if err != nil {
+		return nil, fmt.Errorf("hourly net %s: %w", h, err)
 	}
-	return ratFromDB(s.String)
+	return total, nil
 }
 
 func queryHourlyNetHumanConn(conn *sql.DB, hourUTC time.Time) (*big.Rat, error) {
-	var s sql.NullString
-	err := conn.QueryRow(`
-		SELECT COALESCE(SUM(
-			(s.mint_volume_raw - s.burn_volume_raw) / power(10::numeric, w.decimals)
-		), 0)::text
-		FROM chain.erc20_hourly_stats s
-		INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
-		WHERE w.enabled = true
-		  AND w.decimals IS NOT NULL
-		  AND s.hour_utc = $1::timestamptz
-	`, hourUTC.UTC().Format(time.RFC3339)).Scan(&s)
+	h := hourUTC.UTC().Format(time.RFC3339)
+	rows, err := conn.Query(hourlyNetHumanSelect, h)
 	if err != nil {
-		return nil, fmt.Errorf("hourly net %s: %w", hourUTC.UTC().Format(time.RFC3339), err)
+		return nil, fmt.Errorf("hourly net %s: %w", h, err)
 	}
-	if !s.Valid {
-		return new(big.Rat), nil
+	defer rows.Close()
+	total, err := sumHourlyNetHumanRows(rows)
+	if err != nil {
+		return nil, fmt.Errorf("hourly net %s: %w", h, err)
 	}
-	return ratFromDB(s.String)
+	return total, nil
 }
 
 // cumulativeAtOrBeforeLastComplete returns cumulative total at end of lastCompleteHour (from cache).
