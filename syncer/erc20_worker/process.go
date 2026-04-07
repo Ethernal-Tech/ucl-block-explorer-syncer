@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
@@ -14,8 +13,6 @@ import (
 )
 
 const emptyBlockSentinel = "notx"
-
-const watchlistReloadStride = 100
 
 // BlockJob is queued after a block’s transactions are committed to Postgres.
 type BlockJob struct {
@@ -37,24 +34,6 @@ func newBucket() *tokenBucket {
 	}
 }
 
-type processorState struct {
-	mu              sync.Mutex
-	watch           map[string]struct{}
-	lastReloadEpoch uint64
-}
-
-// proc caches the watchlist per epoch (block / watchlistReloadStride). It is package-global so
-// all ProcessBlock callers share one cache; tests should call [resetWatchlistCache] when needed.
-var proc processorState
-
-// resetWatchlistCache clears the in-memory watchlist cache (integration tests; dev tooling).
-func resetWatchlistCache() {
-	proc.mu.Lock()
-	defer proc.mu.Unlock()
-	proc.watch = nil
-	proc.lastReloadEpoch = 0
-}
-
 func normalizeAddr(a string) string {
 	if !common.IsHexAddress(a) {
 		return ""
@@ -62,7 +41,9 @@ func normalizeAddr(a string) string {
 	return strings.ToLower(common.HexToAddress(a).Hex())
 }
 
-func reloadWatchlist(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
+// loadWatchlist reads enabled token addresses from the DB on every call so new watchlist rows
+// are visible on the next block (no stale in-memory cache / block-epoch stride).
+func loadWatchlist(ctx context.Context, db *sql.DB) (map[string]struct{}, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT lower(address) FROM chain.erc20_watchlist WHERE enabled = true
 	`)
@@ -84,26 +65,9 @@ func reloadWatchlist(ctx context.Context, db *sql.DB) (map[string]struct{}, erro
 	return out, rows.Err()
 }
 
-func ensureWatchlist(ctx context.Context, db *sql.DB, blockNumber uint64) (map[string]struct{}, error) {
-	epoch := blockNumber / watchlistReloadStride
-
-	proc.mu.Lock()
-	defer proc.mu.Unlock()
-
-	if proc.watch != nil && epoch == proc.lastReloadEpoch {
-		return proc.watch, nil
-	}
-
-	w, err := reloadWatchlist(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-	proc.watch = w
-	proc.lastReloadEpoch = epoch
-	return proc.watch, nil
-}
-
-// aggregateBlockLogs sums Transfer events per watchlisted token for one block (no I/O).
+// aggregateBlockLogs sums standard ERC-20 Transfer logs per watchlisted token for one block.
+// transfer_count / transfer_volume_raw are peer-to-peer only (from≠0 and to≠0); mint_* and burn_*
+// use the usual zero-address convention. All buckets exclude OmitTransferFromStats (both addresses zero).
 func aggregateBlockLogs(job BlockJob, watch map[string]struct{}) map[string]*tokenBucket {
 	byToken := make(map[string]*tokenBucket)
 
@@ -121,6 +85,9 @@ func aggregateBlockLogs(job BlockJob, watch map[string]struct{}) map[string]*tok
 				continue
 			}
 			if _, in := watch[tok]; !in {
+				continue
+			}
+			if OmitTransferFromStats(from, to) {
 				continue
 			}
 			class := ClassifyTransfer(from, to)
@@ -149,7 +116,7 @@ func aggregateBlockLogs(job BlockJob, watch map[string]struct{}) map[string]*tok
 
 // ProcessBlock decodes Transfer logs for watchlisted tokens and upserts UTC-hour aggregates.
 func ProcessBlock(ctx context.Context, db *sql.DB, job BlockJob) error {
-	watch, err := ensureWatchlist(ctx, db, job.BlockNumber)
+	watch, err := loadWatchlist(ctx, db)
 	if err != nil {
 		return fmt.Errorf("erc20 watchlist: %w", err)
 	}

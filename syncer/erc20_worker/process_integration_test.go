@@ -138,8 +138,6 @@ func TestInitSQLFileIsReadable(t *testing.T) {
 }
 
 func TestIntegration_ProcessBlock_WatchlistAndUpsert(t *testing.T) {
-	resetWatchlistCache()
-
 	db := openIntegrationPostgreSQL(t)
 
 	applyInitSQL(t, db)
@@ -212,9 +210,8 @@ func TestIntegration_ProcessBlock_WatchlistAndUpsert(t *testing.T) {
 	}
 }
 
-func TestIntegration_ReloadWatchlistAcrossEpoch(t *testing.T) {
-	resetWatchlistCache()
-
+// Watchlist changes take effect on the next ProcessBlock (no block-epoch cache).
+func TestIntegration_WatchlistMidSessionInsert(t *testing.T) {
 	db := openIntegrationPostgreSQL(t)
 
 	applyInitSQL(t, db)
@@ -235,7 +232,6 @@ func TestIntegration_ReloadWatchlistAcrossEpoch(t *testing.T) {
 		t.Fatalf("ProcessBlock empty watchlist: %v", err)
 	}
 
-	// Insert token and move to block 100 (new epoch for watchlist cache) so reload sees it.
 	_, err = db.Exec(`INSERT INTO chain.erc20_watchlist (address, enabled) VALUES ($1, true)`, token)
 	if err != nil {
 		t.Fatalf("insert watchlist: %v", err)
@@ -243,8 +239,8 @@ func TestIntegration_ReloadWatchlistAcrossEpoch(t *testing.T) {
 
 	peer := common.HexToAddress("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
 	topics := []string{TransferTopic.Hex(), addrTopicHex(peer), addrTopicHex(peer)}
-	job100 := BlockJob{
-		BlockNumber: 100,
+	job1 := BlockJob{
+		BlockNumber: 1,
 		BlockTS:     1704067200,
 		Txs: []*types.Transaction{
 			{
@@ -255,7 +251,7 @@ func TestIntegration_ReloadWatchlistAcrossEpoch(t *testing.T) {
 			},
 		},
 	}
-	if err := ProcessBlock(context.Background(), db, job100); err != nil {
+	if err := ProcessBlock(context.Background(), db, job1); err != nil {
 		t.Fatalf("ProcessBlock: %v", err)
 	}
 

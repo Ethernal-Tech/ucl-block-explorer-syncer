@@ -15,11 +15,17 @@ var TransferTopic = crypto.Keccak256Hash([]byte("Transfer(address,address,uint25
 
 var zeroAddr = common.Address{}
 
+// OmitTransferFromStats is true for decoded Transfer logs we do not aggregate. Only
+// Transfer(0,0,value) is omitted — it is not a meaningful mint, burn, or peer transfer.
+// Zero-value Transfer events are still counted (they are valid logs).
+func OmitTransferFromStats(from, to common.Address) bool {
+	return from == zeroAddr && to == zeroAddr
+}
+
 // ClassifyTransfer labels a standard ERC-20 Transfer using zero-address conventions.
+// Caller must skip OmitTransferFromStats first (so from/to are not both zero).
 func ClassifyTransfer(from, to common.Address) string {
 	switch {
-	case from == zeroAddr && to == zeroAddr:
-		return "transfer"
 	case from == zeroAddr:
 		return "mint"
 	case to == zeroAddr:

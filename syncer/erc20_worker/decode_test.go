@@ -21,8 +21,23 @@ func TestClassifyTransfer(t *testing.T) {
 	if got := ClassifyTransfer(nonZero, nonZero); got != "transfer" {
 		t.Fatalf("transfer: got %q", got)
 	}
-	if got := ClassifyTransfer(zero, zero); got != "transfer" {
-		t.Fatalf("both zero: got %q", got)
+}
+
+func TestOmitTransferFromStats(t *testing.T) {
+	zero := common.Address{}
+	nonZero := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	if !OmitTransferFromStats(zero, zero) {
+		t.Fatal("both addresses zero should omit")
+	}
+	if OmitTransferFromStats(nonZero, nonZero) {
+		t.Fatal("normal transfer should not omit")
+	}
+	if OmitTransferFromStats(zero, nonZero) {
+		t.Fatal("mint should not omit")
+	}
+	if OmitTransferFromStats(nonZero, zero) {
+		t.Fatal("burn should not omit")
 	}
 }
 
