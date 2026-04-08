@@ -2,7 +2,6 @@ package txworker
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -273,15 +272,11 @@ func (w *TxWorker) sendBatch(batch []rpc.BatchElem) error {
 			continue
 		}
 
-		var batchErr error
+		// This should never happen! Log and continue.
 		for _, elem := range batch {
 			if elem.Error != nil {
 				w.log("%s RPC call failed for %v: %v", elem.Method, elem.Args[0], elem.Error)
-				batchErr = errors.Join(batchErr, fmt.Errorf("%s %v: %w", elem.Method, elem.Args[0], elem.Error))
 			}
-		}
-		if batchErr != nil {
-			return batchErr
 		}
 
 		return nil
