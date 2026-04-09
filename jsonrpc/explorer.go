@@ -56,6 +56,24 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 			return nil, perr
 		}
 		out, err = h.Explorer.GetBlockTransactionCount(blockNumber)
+	case "explorer_getErc20DailyStats":
+		var req *api_storage.Erc20DailyStatsRequest
+		parseOptionalObject(params, &req)
+		out, err = h.Explorer.GetErc20DailyStats(req)
+	case "explorer_getErc20CirculationCumulative":
+		var req *api_storage.Erc20CirculationCumulativeRequest
+		parseOptionalObject(params, &req)
+		out, err = h.Explorer.GetErc20CirculationCumulative(req)
+	case "explorer_getErc20Watchlist":
+		out, err = h.Explorer.GetErc20Watchlist()
+	case "explorer_getActiveEntityDailyStats":
+		var req *api_storage.EntityDailyStatsRequest
+		parseOptionalObject(params, &req)
+		out, err = h.Explorer.GetActiveEntityDailyStats(req)
+	case "explorer_getOnboardingEntityDailyStats":
+		var req *api_storage.EntityDailyStatsRequest
+		parseOptionalObject(params, &req)
+		out, err = h.Explorer.GetOnboardingEntityDailyStats(req)
 	default:
 		return nil, NewMethodNotFoundError(method)
 	}

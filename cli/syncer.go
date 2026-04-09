@@ -18,6 +18,10 @@ var (
 	fullBlock          bool
 	batchSize          uint64
 	txWorkers          uint64
+	erc20Stats         bool
+	erc20StatsBuffer   uint
+	entityStats        bool
+	entityStatsBuffer  uint
 )
 
 var syncerCommand = &cobra.Command{
@@ -63,6 +67,18 @@ func setOptionalFlags() {
 
 	syncerCommand.Flags().Uint64VarP(&txWorkers, "tx-workers", "w", 1,
 		"(maximum) number of concurrent goroutines used to fetch transaction data")
+
+	syncerCommand.Flags().BoolVar(&erc20Stats, "erc20-stats", false,
+		"after each block, decode ERC-20 Transfer logs for addresses in chain.erc20_watchlist and upsert daily UTC stats")
+
+	syncerCommand.Flags().UintVar(&erc20StatsBuffer, "erc20-stats-buffer", 64,
+		"bounded queue depth for ERC-20 stats jobs; when full, blocks are dropped (indexing never blocks)")
+
+	syncerCommand.Flags().BoolVar(&entityStats, "entity-stats", false,
+		"after each block, upsert per-day unique transacting addresses and first-seen EOA registry (needs --full-block for from/to)")
+
+	syncerCommand.Flags().UintVar(&entityStatsBuffer, "entity-stats-buffer", 64,
+		"bounded queue depth for entity stats jobs; when full, blocks are dropped")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
@@ -115,6 +131,14 @@ func execute(cmd *cobra.Command, args []string) error {
 
 	if fullBlock {
 		opts = append(opts, syncer.WithFullTransactions())
+	}
+
+	if erc20Stats {
+		opts = append(opts, syncer.WithErc20Stats(sh.DB(), erc20StatsBuffer))
+	}
+
+	if entityStats {
+		opts = append(opts, syncer.WithEntityStats(sh.DB(), entityStatsBuffer))
 	}
 
 	if syn, err := syncer.NewSyncer(rpcUrl, sh, opts...); err == nil {

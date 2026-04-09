@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,10 +11,14 @@ import (
 )
 
 // Config matches polygon-edge jsonrpc.Config fields used for GET / (handleGetRequest).
+// DB and AdminAPISecret enable POST /admin/v1/erc20/watchlist (Bearer token auth).
 type Config struct {
 	ChainName string
 	ChainID   uint64
 	Version   string
+	DB        *sql.DB
+	// AdminAPISecret: if empty, POST /admin/v1/erc20/watchlist returns 404 (set ADMIN_API_SECRET or --admin-api-secret).
+	AdminAPISecret string
 }
 
 // Server mirrors ucl-node2 jsonrpc.JSONRPC HTTP surface: POST / (JSON-RPC), GET /
@@ -42,6 +47,9 @@ func New(ex *explorer.Explorer, cfg Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+	if s.cfg.DB != nil {
+		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.handleAdminErc20Watchlist)
+	}
 	mux.Handle("/", http.HandlerFunc(s.handle))
 	mux.HandleFunc("/ws", s.handleWS)
 	return middlewareFactory()(mux)

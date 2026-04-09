@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/api_storage"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/explorer"
@@ -14,12 +15,13 @@ import (
 )
 
 var (
-	apiListen    string
-	apiDBConn    string
-	apiLogging   bool
-	apiChainName string
-	apiChainID   uint64
-	apiVersion   string
+	apiListen         string
+	apiDBConn         string
+	apiLogging        bool
+	apiChainName      string
+	apiChainID        uint64
+	apiVersion        string
+	apiAdminAPISecret string
 )
 
 var apiCommand = &cobra.Command{
@@ -30,6 +32,8 @@ var apiCommand = &cobra.Command{
   POST /     — JSON-RPC 2.0 (explorer_* methods)
   GET /      — { "name", "chain_id", "version" } (same shape as polygon-edge GET /)
   /ws        — registered; returns 501 (filters/subscriptions not implemented here)
+
+Optional: POST /admin/v1/erc20/watchlist — register tokens in chain.erc20_watchlist (Bearer ADMIN_API_SECRET).
 
 There are no /api/... REST routes on the node; use POST / with explorer_* methods.`,
 	RunE: runAPI,
@@ -48,6 +52,8 @@ func init() {
 		"value for GET / JSON field \"chain_id\"")
 	apiCommand.Flags().StringVar(&apiVersion, "version", "0.0.1",
 		"value for GET / JSON field \"version\"")
+	apiCommand.Flags().StringVar(&apiAdminAPISecret, "admin-api-secret", "",
+		"Bearer token for POST /admin/v1/erc20/watchlist (default: ADMIN_API_SECRET env)")
 	_ = apiCommand.MarkFlagRequired("db-conn")
 }
 
@@ -71,10 +77,17 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	adminSecret := os.Getenv("ADMIN_API_SECRET")
+	if apiAdminAPISecret != "" {
+		adminSecret = apiAdminAPISecret
+	}
+
 	srv := httpserver.New(ex, httpserver.Config{
-		ChainName: apiChainName,
-		ChainID:   apiChainID,
-		Version:   apiVersion,
+		ChainName:      apiChainName,
+		ChainID:        apiChainID,
+		Version:        apiVersion,
+		DB:             db,
+		AdminAPISecret: adminSecret,
 	})
 	log.Printf("explorer API listening on %s (POST / JSON-RPC; GET / metadata — polygon-edge compatible)", apiListen)
 

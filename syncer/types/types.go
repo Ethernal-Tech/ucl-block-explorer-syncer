@@ -21,9 +21,17 @@ type Transaction struct {
 	Type                 hexutil.Uint64 `json:"type"`
 	ChainID              *hexutil.Big   `json:"chainId"`
 	Status               hexutil.Uint64 `json:"status"`
+	Logs                 []ReceiptLog   `json:"logs"`
 	BlockHash            *string
 	BlockNumber          *hexutil.Uint64
 	BlockTimestamp       *hexutil.Uint64
+}
+
+// ReceiptLog is a minimal log object unmarshaled from eth_getTransactionReceipt ("logs").
+type ReceiptLog struct {
+	Address string   `json:"address"`
+	Topics  []string `json:"topics"`
+	Data    string   `json:"data"`
 }
 
 type Block struct {

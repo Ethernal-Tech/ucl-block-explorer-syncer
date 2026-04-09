@@ -233,7 +233,7 @@ func (w *TxPoolWorker) Start() error {
 // shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [TxPoolWorker.errCh].
 func (w *TxPoolWorker) shutDown(err error) {
 	if err != nil {
-		w.log(err.Error())
+		w.log("%s", err.Error())
 
 		w.errCh <- err
 	}

@@ -1,5 +1,5 @@
-# Build requires Go version from go.mod (toolchain auto-downloads when needed).
-FROM golang:1.24-bookworm AS builder
+# Match go.mod; GOTOOLCHAIN=auto can still fetch a newer patch toolchain if go.mod pins one.
+FROM golang:1.26-bookworm AS builder
 
 WORKDIR /src
 
@@ -11,9 +11,17 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/syncer .
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# Alpine (not distroless) so Kurtosis can run `sh -c` one-shots with this image to copy
+# scripts/init.sql into a files artifact — same pattern as Bedrock + faucet migrations.
+# Schema stays only in this repo under scripts/init.sql; Bedrock never vendors a copy.
+FROM alpine:3.19
 
-COPY --from=builder /out/syncer /syncer
+RUN apk add --no-cache ca-certificates \
+    && addgroup -g 65532 -S nonroot \
+    && adduser -u 65532 -S -G nonroot -H -D nonroot
+
+COPY --from=builder --chown=65532:65532 /out/syncer /syncer
+COPY --chown=65532:65532 scripts/init.sql /init.sql
 
 USER nonroot:nonroot
 

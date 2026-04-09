@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,24 @@ func (h *PgStorageHandler) Shutdown() error {
 	}
 
 	return nil
+}
+
+// DB returns the underlying PostgreSQL handle for optional features (e.g. ERC-20 stats worker).
+func (h *PgStorageHandler) DB() *sql.DB {
+	return h.db
+}
+
+// txsSortedByHash returns a copy of txs sorted by hash ascending. PostgreSQL may take row-level
+// locks in statement order; aligning order across InsertBlock, InsertTransactions, and
+// InsertPoolTransactions reduces deadlock risk when sessions touch overlapping hashes.
+func txsSortedByHash(txs []*types.Transaction) []*types.Transaction {
+	if len(txs) <= 1 {
+		return txs
+	}
+	out := make([]*types.Transaction, len(txs))
+	copy(out, txs)
+	sort.Slice(out, func(i, j int) bool { return out[i].Hash < out[j].Hash })
+	return out
 }
 
 func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
@@ -101,10 +120,11 @@ func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 		}
 
 		chunkSize := 65535 / paramsPerRow
+		ordered := txsSortedByHash(block.Transactions)
 
-		for i := 0; i < len(block.Transactions); i += chunkSize {
-			end := min(i+chunkSize, len(block.Transactions))
-			chunk := block.Transactions[i:end]
+		for i := 0; i < len(ordered); i += chunkSize {
+			end := min(i+chunkSize, len(ordered))
+			chunk := ordered[i:end]
 
 			if err := h.batchInsertCommittedTransactions(tx, chunk); err != nil {
 				return err
@@ -133,10 +153,11 @@ func (h *PgStorageHandler) InsertTransactions(txs []*types.Transaction) error {
 	}
 
 	chunkSize := 65535 / paramsPerRow
+	ordered := txsSortedByHash(txs)
 
-	for i := 0; i < len(txs); i += chunkSize {
-		end := min(i+chunkSize, len(txs))
-		chunk := txs[i:end]
+	for i := 0; i < len(ordered); i += chunkSize {
+		end := min(i+chunkSize, len(ordered))
+		chunk := ordered[i:end]
 
 		if err := h.batchInsertTransactionsWithStatus(tx, chunk); err != nil {
 			return err
@@ -488,11 +509,11 @@ func (h *PgStorageHandler) InsertPoolTransactions(pending, queued []*types.Trans
 	paramsPerRow := 14
 	chunkSize := 65535 / paramsPerRow
 
-	if err := h.batchInsertPoolTransactions(db, queued, "queued", chunkSize); err != nil {
+	if err := h.batchInsertPoolTransactions(db, txsSortedByHash(queued), "queued", chunkSize); err != nil {
 		return err
 	}
 
-	if err := h.batchInsertPoolTransactions(db, pending, "pending", chunkSize); err != nil {
+	if err := h.batchInsertPoolTransactions(db, txsSortedByHash(pending), "pending", chunkSize); err != nil {
 		return err
 	}
 
