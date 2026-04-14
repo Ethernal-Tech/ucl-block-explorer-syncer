@@ -26,7 +26,7 @@ psql "$DATABASE_URL" -f scripts/init.sql
 
 Or use the Docker Compose setup below, which mounts `scripts/init.sql` on first PostgreSQL startup.
 
-**Explorer queries** filter transactions by the same **whitelisted `data_method` selectors** as ucl-node2 (see `api_storage/api_storage.go`). Only transactions whose input starts with one of those selectors appear in block txn counts and transaction lists. The indexer stores `data_method` as the first 10 characters of `input` (`0x` + 8 hex).
+**Explorer queries** return transactions from `chain.transactions` without filtering by `data_method`. The indexer stores `data_method` as the first 10 characters of `input` (`0x` + 8 hex) for display and optional client-side use.
 
 ## CLI commands
 
