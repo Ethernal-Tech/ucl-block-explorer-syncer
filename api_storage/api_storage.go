@@ -413,7 +413,7 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
           t.block_number,
           COALESCE(t.from_address, ''),
           COALESCE(t.to_address, ''),
-          t.data_method,
+          COALESCE(t.data_method, ''),
           COALESCE(b.timestamp, 0) as timestamp
        FROM chain.transactions t
        LEFT JOIN chain.blocks b ON t.block_number = b.number
@@ -442,7 +442,7 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
 	}
 	defer rows.Close()
 
-	var transactions []TransactionListItem
+	transactions := make([]TransactionListItem, 0, req.PageSize)
 	rowID := int64(offset) + 1
 
 	for rows.Next() {
@@ -521,7 +521,7 @@ func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
 			t.block_number,
 			COALESCE(t.from_address, ''),
 			COALESCE(t.to_address, ''),
-			t.data_method,
+			COALESCE(t.data_method, ''),
 			t.data,
 			b.timestamp
 		FROM chain.transactions t
