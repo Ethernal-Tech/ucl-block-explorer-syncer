@@ -123,7 +123,7 @@ func (e *Explorer) GetTransactionByHash(hash string) (interface{}, error) {
 	return nil, nil
 }
 
-// GetBlockTransactionCount returns the number of whitelist transactions in a block.
+// GetBlockTransactionCount returns the number of transactions indexed for a block.
 func (e *Explorer) GetBlockTransactionCount(blockNumber string) (interface{}, error) {
 	if blockNumber == "" {
 		return map[string]interface{}{

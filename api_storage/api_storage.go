@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// Whitelisted data_method selectors (same as polygon-edge explorer api_storage).
-const whitelistMethodIn = `('0xce23723f', '0xcc49f1b3', '0x6a28376d', '0xa0caa0ba', '0x40c10f19', '0x42966c68', '0xa9059cbb', '0x97f1ae88', '0x7fa3845c')`
-
 const maxBlockNumberDefault = "9223372036854775807"
 
 // normalizeMaxBlockNumber maps empty, UI sentinels ("-"), and non-numeric values to the
@@ -43,7 +40,7 @@ func validBlockNumberString(s string) (string, bool) {
 	return strconv.FormatInt(n, 10), true
 }
 
-// GetBlockList get block list (using JOIN query and data_method field)
+// GetBlockList returns blocks with per-block transaction counts (all rows in chain.transactions with a block number).
 func GetBlockList(req BlockListRequest) (*BlockListResponse, error) {
 	if req.Page <= 0 {
 		req.Page = 1
@@ -71,8 +68,7 @@ func GetBlockList(req BlockListRequest) (*BlockListResponse, error) {
 					t.block_number,
 					COUNT(*) as count
 				FROM chain.transactions t
-				WHERE t.data_method IN ` + whitelistMethodIn + `
-				AND t.block_number IS NOT NULL
+				WHERE t.block_number IS NOT NULL
 				AND t.block_number <= $3::BIGINT
 				GROUP BY t.block_number
 			) txn_count ON b.number = txn_count.block_number
@@ -94,8 +90,7 @@ func GetBlockList(req BlockListRequest) (*BlockListResponse, error) {
 					t.block_number,
 					COUNT(*) as count
 				FROM chain.transactions t
-				WHERE t.data_method IN ` + whitelistMethodIn + `
-				AND t.block_number IS NOT NULL
+				WHERE t.block_number IS NOT NULL
 				AND t.block_number <= $3::BIGINT
 				GROUP BY t.block_number
 			) txn_count ON b.number = txn_count.block_number
@@ -157,8 +152,7 @@ func GetBlockList(req BlockListRequest) (*BlockListResponse, error) {
 			INNER JOIN (
 				SELECT DISTINCT t.block_number
 				FROM chain.transactions t
-				WHERE t.data_method IN ` + whitelistMethodIn + `
-				AND t.block_number IS NOT NULL
+				WHERE t.block_number IS NOT NULL
 			) txn_blocks ON b.number = txn_blocks.block_number
 			WHERE b.number <= $1::BIGINT
 		`
@@ -206,8 +200,7 @@ func GetBlockDetail(req BlockDetailRequest) (*BlockDetailResponse, error) {
 				t.block_number,
 				COUNT(*) as count
 			FROM chain.transactions t
-			WHERE t.data_method IN ` + whitelistMethodIn + `
-			AND t.block_number = $1::BIGINT
+			WHERE t.block_number = $1::BIGINT
 			GROUP BY t.block_number
 		) txn_count ON b.number = txn_count.block_number
 		WHERE b.number = $1::BIGINT
@@ -277,8 +270,7 @@ func GetLineData(req LineDataRequest) (*LineDataResponse, error) {
 					COUNT(DISTINCT t.hash) as count
 				FROM chain.blocks b
 				JOIN chain.transactions t ON b.number = t.block_number
-				WHERE t.data_method IN ` + whitelistMethodIn + `
-				AND to_timestamp(b.timestamp) >= NOW() - INTERVAL '23 hours'
+				WHERE to_timestamp(b.timestamp) >= NOW() - INTERVAL '23 hours'
 				GROUP BY date_trunc('hour', to_timestamp(b.timestamp))
 			)
 			SELECT 
@@ -304,8 +296,7 @@ func GetLineData(req LineDataRequest) (*LineDataResponse, error) {
 					COUNT(DISTINCT t.hash) as count
 				FROM chain.blocks b
 				JOIN chain.transactions t ON b.number = t.block_number
-				WHERE t.data_method IN ` + whitelistMethodIn + `
-				AND DATE(to_timestamp(b.timestamp)) >= CURRENT_DATE - INTERVAL '29 days'
+				WHERE DATE(to_timestamp(b.timestamp)) >= CURRENT_DATE - INTERVAL '29 days'
 				GROUP BY DATE(to_timestamp(b.timestamp))
 			)
 			SELECT 
@@ -368,7 +359,7 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
 	var queryParams []interface{}
 	paramIndex := 1
 
-	baseCondition := `t.data_method IN ` + whitelistMethodIn
+	baseCondition := `TRUE`
 
 	var dynamicConditions []string
 	if req.Hash != "" {
@@ -422,7 +413,7 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
           t.block_number,
           COALESCE(t.from_address, ''),
           COALESCE(t.to_address, ''),
-          t.data_method,
+          COALESCE(t.data_method, ''),
           COALESCE(b.timestamp, 0) as timestamp
        FROM chain.transactions t
        LEFT JOIN chain.blocks b ON t.block_number = b.number
@@ -451,7 +442,7 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
 	}
 	defer rows.Close()
 
-	var transactions []TransactionListItem
+	transactions := make([]TransactionListItem, 0, req.PageSize)
 	rowID := int64(offset) + 1
 
 	for rows.Next() {
@@ -530,7 +521,7 @@ func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
 			t.block_number,
 			COALESCE(t.from_address, ''),
 			COALESCE(t.to_address, ''),
-			t.data_method,
+			COALESCE(t.data_method, ''),
 			t.data,
 			b.timestamp
 		FROM chain.transactions t

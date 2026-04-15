@@ -233,7 +233,7 @@ type Erc20CirculationCumulativeRow struct {
 	Total     string `json:"total"`
 }
 
-// method signature to function name mapping (whitelist for explorer queries)
+// method signature to function name mapping for explorer transaction labels
 var methodToFunctionName = map[string]string{
 	"0xce23723f": "privateMint",
 	"0xcc49f1b3": "privateSplitToken",
