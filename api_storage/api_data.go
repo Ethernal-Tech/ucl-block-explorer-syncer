@@ -48,6 +48,15 @@ type BlockDetailData struct {
 	Txn         string `json:"txn"`
 	Timestamp   int64  `json:"timestamp"`
 	Nonce       string `json:"nonce"`
+	ParentHash  string `json:"parentHash"`
+	// ParentBlockNumber is the resolved number of the block whose hash is ParentHash.
+	// We resolve it by hash (not by `number-1`) so the link stays correct even if
+	// a re-org or fork is present in the indexed history. Empty for genesis or when
+	// the parent has not been indexed yet.
+	ParentBlockNumber string `json:"parentBlockNumber,omitempty"`
+	Miner             string `json:"miner"`
+	GasUsed           uint64 `json:"gasUsed"`
+	GasLimit          uint64 `json:"gasLimit"`
 }
 
 // LineDataRequest Line chart data query request
