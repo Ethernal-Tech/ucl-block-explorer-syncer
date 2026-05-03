@@ -98,7 +98,10 @@ func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 		block.TransactionsRoot,
 		block.StateRoot,
 		block.ReceiptsRoot,
-		block.Miner,
+		// Polygon Edge IBFT always sets header.miner = 0x0...0; the real
+		// proposer is recovered from the proposer seal in extraData. Falls
+		// back to ZeroAddress on any recovery failure (and on non-IBFT chains).
+		RecoverIBFTProposer(block.Hash, block.ExtraData),
 		uint64(block.Difficulty),
 		uint64(block.TotalDifficulty),
 		block.ExtraData,

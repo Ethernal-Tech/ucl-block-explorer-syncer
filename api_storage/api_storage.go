@@ -187,14 +187,24 @@ func GetBlockDetail(req BlockDetailRequest) (*BlockDetailResponse, error) {
 		}, nil
 	}
 
+	// We resolve the parent block number by joining on parent_hash instead of using
+	// (number - 1). This guarantees the link in the explorer keeps pointing to the
+	// actual indexed parent even in re-org / fork scenarios. The join is LEFT so
+	// genesis (parent_hash = 0x000...) and not-yet-indexed parents do not error out.
 	query := `
 		SELECT 
 			b.number,
 			b.hash,
 			b.timestamp,
 			b.nonce,
+			b.parent_hash,
+			p.number as parent_number,
+			b.miner,
+			b.gas_used,
+			b.gas_limit,
 			COALESCE(txn_count.count, 0) as txn_count
 		FROM chain.blocks b
+		LEFT JOIN chain.blocks p ON p.hash = b.parent_hash
 		LEFT JOIN (
 			SELECT 
 				t.block_number,
@@ -218,9 +228,20 @@ func GetBlockDetail(req BlockDetailRequest) (*BlockDetailResponse, error) {
 	var number uint64
 	var timestamp uint64
 	var txnCount int64
+	var parentNumber sql.NullInt64
 
 	err := conn.QueryRow(query, bn).Scan(
-		&number, &detail.BlockHash, &timestamp, &detail.Nonce, &txnCount)
+		&number,
+		&detail.BlockHash,
+		&timestamp,
+		&detail.Nonce,
+		&detail.ParentHash,
+		&parentNumber,
+		&detail.Miner,
+		&detail.GasUsed,
+		&detail.GasLimit,
+		&txnCount,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return &BlockDetailResponse{
@@ -241,6 +262,10 @@ func GetBlockDetail(req BlockDetailRequest) (*BlockDetailResponse, error) {
 
 	if !strings.HasPrefix(detail.Nonce, "0x") && detail.Nonce != "" {
 		detail.Nonce = "0x" + detail.Nonce
+	}
+
+	if parentNumber.Valid {
+		detail.ParentBlockNumber = fmt.Sprintf("%d", parentNumber.Int64)
 	}
 
 	return &BlockDetailResponse{
