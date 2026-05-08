@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS chain.blocks (
     CONSTRAINT blocks_number_unique UNIQUE (number)
 );
 
+CREATE INDEX IF NOT EXISTS idx_blocks_number_desc ON chain.blocks(number DESC);
+CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON chain.blocks(timestamp);
+CREATE INDEX IF NOT EXISTS idx_blocks_number ON chain.blocks(number);
+
 CREATE TABLE IF NOT EXISTS chain.transactions (
     hash            VARCHAR(66) PRIMARY KEY,
     block_hash      VARCHAR(66),
@@ -48,35 +52,42 @@ CREATE TABLE IF NOT EXISTS chain.transactions (
     CONSTRAINT transactions_hash_unique UNIQUE (hash)
 );
 
-CREATE TABLE IF NOT EXISTS chain.metadata (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_blocks_number_desc ON chain.blocks(number DESC);
-CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON chain.blocks(timestamp);
-CREATE INDEX IF NOT EXISTS idx_blocks_number ON chain.blocks(number);
-
 CREATE INDEX IF NOT EXISTS idx_transactions_block_hash ON chain.transactions(block_hash);
 CREATE INDEX IF NOT EXISTS idx_transactions_block_number ON chain.transactions(block_number);
 CREATE INDEX IF NOT EXISTS idx_transactions_from_address ON chain.transactions(from_address);
 CREATE INDEX IF NOT EXISTS idx_transactions_to_address ON chain.transactions(to_address);
 CREATE INDEX IF NOT EXISTS idx_transactions_status ON chain.transactions(status);
-
 CREATE INDEX IF NOT EXISTS idx_transactions_sort ON chain.transactions (block_number DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_hash_lookup ON chain.transactions USING HASH (hash);
 
--- ERC-20 monitoring: token contracts to aggregate Transfer logs for (syncer --erc20-stats).
-CREATE TABLE IF NOT EXISTS chain.erc20_watchlist (
-    address VARCHAR(42) PRIMARY KEY,
-    symbol VARCHAR(32),
-    decimals SMALLINT,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP
+CREATE TABLE IF NOT EXISTS chain.transaction_logs (
+    tx_hash      VARCHAR(66) NOT NULL REFERENCES chain.transactions(hash),
+    log_index    INT NOT NULL,
+    block_number BIGINT NOT NULL,
+    address      VARCHAR(50) NOT NULL,
+    topics       TEXT[] NOT NULL,
+    data         TEXT NOT NULL,
+    PRIMARY KEY (tx_hash, log_index)
 );
 
--- Per-token UTC-hour aggregates (mint/burn/transfer from standard Transfer events). hour_utc = start of hour in UTC.
+CREATE INDEX IF NOT EXISTS idx_transaction_logs_address_block ON chain.transaction_logs (address, block_number);
+
+CREATE TABLE IF NOT EXISTS chain.metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chain.erc20_watchlist (
+    address     VARCHAR(42) PRIMARY KEY,
+    symbol      VARCHAR(32),
+    decimals    SMALLINT,
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+    is_private     BOOLEAN NOT NULL DEFAULT FALSE,
+    next_block BIGINT NOT NULL DEFAULT 1,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS chain.erc20_hourly_stats (
     token_address VARCHAR(42) NOT NULL,
     hour_utc TIMESTAMPTZ NOT NULL,

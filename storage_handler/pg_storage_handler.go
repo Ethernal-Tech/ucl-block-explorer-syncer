@@ -11,6 +11,7 @@ import (
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 )
 
@@ -19,16 +20,7 @@ type PgStorageHandler struct {
 	withTxs bool
 }
 
-func NewPgStorageHandler(connString string, withTxs bool) (*PgStorageHandler, error) {
-	db, err := sql.Open("postgres", connString)
-	if err != nil {
-		return nil, fmt.Errorf("cannot open postgres db: %w", err)
-	}
-
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("db ping error: %w", err)
-	}
-
+func NewPgStorageHandler(db *sql.DB, withTxs bool) (*PgStorageHandler, error) {
 	return &PgStorageHandler{db, withTxs}, nil
 }
 
@@ -160,9 +152,24 @@ func (h *PgStorageHandler) InsertTransactions(txs []*types.Transaction) error {
 
 	for i := 0; i < len(ordered); i += chunkSize {
 		end := min(i+chunkSize, len(ordered))
-		chunk := ordered[i:end]
 
-		if err := h.batchInsertTransactionsWithStatus(tx, chunk); err != nil {
+		if err := h.batchInsertTransactionsWithStatus(tx, ordered[i:end]); err != nil {
+			return err
+		}
+	}
+
+	var allLogs []types.ReceiptLog
+
+	for _, t := range ordered {
+		allLogs = append(allLogs, t.Logs...)
+	}
+
+	logsChunkSize := 65535 / 6
+
+	for i := 0; i < len(allLogs); i += logsChunkSize {
+		end := min(i+logsChunkSize, len(allLogs))
+
+		if err := h.batchInsertLogs(tx, allLogs[i:end]); err != nil {
 			return err
 		}
 	}
@@ -172,6 +179,48 @@ func (h *PgStorageHandler) InsertTransactions(txs []*types.Transaction) error {
 	}
 
 	return tx.Commit()
+}
+
+func (h *PgStorageHandler) batchInsertLogs(tx *sql.Tx, logs []types.ReceiptLog) error {
+	var (
+		placeholders []string
+		args         []any
+		argIdx       = 1
+	)
+
+	for _, l := range logs {
+		placeholders = append(placeholders, fmt.Sprintf(
+			"($%d,$%d,$%d,$%d,$%d,$%d)",
+			argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5,
+		))
+
+		args = append(args,
+			l.TransactionHash,
+			uint64(l.Index),
+			uint64(l.BlockNumber),
+			l.Address,
+			pq.Array(l.Topics),
+			l.Data,
+		)
+
+		argIdx += 6
+	}
+
+	if len(placeholders) == 0 {
+		return nil
+	}
+
+	query := `
+		INSERT INTO chain.transaction_logs (tx_hash, log_index, block_number, address, topics, data)
+		VALUES ` + strings.Join(placeholders, ", ") + `
+		ON CONFLICT (tx_hash, log_index) DO NOTHING
+	`
+
+	if _, err := tx.Exec(query, args...); err != nil {
+		return fmt.Errorf("failed to insert logs: %w", err)
+	}
+
+	return nil
 }
 
 func (h *PgStorageHandler) setTxWorkerLastBlockProcessed(tx *sql.Tx, blockNumber uint64) error {

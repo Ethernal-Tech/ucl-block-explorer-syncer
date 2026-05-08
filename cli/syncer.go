@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"database/sql"
+	"fmt"
+
+	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/storage_handler"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
@@ -8,20 +12,22 @@ import (
 )
 
 var (
-	rpcUrl             string
-	connString         string
-	logging            bool
-	pollInterval       uint64
-	tipOnly            bool
-	syncTxPool         bool
-	txPoolPollInterval uint64
-	fullBlock          bool
-	batchSize          uint64
-	txWorkers          uint64
-	erc20Stats         bool
-	erc20StatsBuffer   uint
-	entityStats        bool
-	entityStatsBuffer  uint
+	rpcUrl                      string
+	connString                  string
+	logging                     bool
+	pollInterval                uint64
+	tipOnly                     bool
+	syncTxPool                  bool
+	txPoolPollInterval          uint64
+	fullBlock                   bool
+	batchSize                   uint64
+	txWorkers                   uint64
+	erc20Stats                  bool
+	erc20WatchlistCheckInterval uint64
+	erc20StartFromTip           bool
+	erc20ProcessInterval        uint64
+	entityStats                 bool
+	entityStatsBuffer           uint
 )
 
 var syncerCommand = &cobra.Command{
@@ -53,11 +59,15 @@ func setOptionalFlags() {
 	syncerCommand.Flags().BoolVar(&tipOnly, "tip-only", false,
 		"apply poll interval (--poll-interval) only when syncer reaches the tip of the chain")
 
-	syncerCommand.Flags().BoolVar(&syncTxPool, "sync-tx-pool", false,
-		"additionally synchronize (pending and queued) txs from the tx pool")
+	// The txpool worker is scheduled for removal.
 
-	syncerCommand.Flags().Uint64Var(&txPoolPollInterval, "tx-pool-poll-interval", 2000,
-		"interval in milliseconds between tx pool polls")
+	// [SCHEDULED FOR REMOVAL]
+	// syncerCommand.Flags().BoolVar(&syncTxPool, "sync-tx-pool", false,
+	// 	"additionally synchronize (pending and queued) txs from the tx pool")
+
+	// [SCHEDULED FOR REMOVAL]
+	// syncerCommand.Flags().Uint64Var(&txPoolPollInterval, "tx-pool-poll-interval", 2000,
+	// 	"interval in milliseconds between tx pool polls")
 
 	syncerCommand.Flags().BoolVarP(&fullBlock, "full-block", "f", false,
 		"when fetching a block, retrieve full tx data instead of only tx hashes")
@@ -69,10 +79,16 @@ func setOptionalFlags() {
 		"(maximum) number of concurrent goroutines used to fetch transaction data")
 
 	syncerCommand.Flags().BoolVar(&erc20Stats, "erc20-stats", false,
-		"after each block, decode ERC-20 Transfer logs for addresses in chain.erc20_watchlist and upsert daily UTC stats")
+		"enable ERC-20 statistics aggregation for watchlisted tokens (mint, burn, transfer counts and volumes per UTC hour)")
 
-	syncerCommand.Flags().UintVar(&erc20StatsBuffer, "erc20-stats-buffer", 64,
-		"bounded queue depth for ERC-20 stats jobs; when full, blocks are dropped (indexing never blocks)")
+	syncerCommand.Flags().Uint64Var(&erc20WatchlistCheckInterval, "erc20-wl-check-interval", 2000,
+		"how often the ERC-20 watchlist is checked for changes, in milliseconds")
+
+	syncerCommand.Flags().BoolVar(&erc20StartFromTip, "erc20-start-from-tip", false,
+		"when a token is added to the watchlist, start processing from the current chain tip instead of its last processed block")
+
+	syncerCommand.Flags().Uint64Var(&erc20ProcessInterval, "erc20-process-interval", 2000,
+		"how often the syncer retries processing a block for ERC-20 events when it is not yet available, in milliseconds")
 
 	syncerCommand.Flags().BoolVar(&entityStats, "entity-stats", false,
 		"after each block, upsert per-day unique transacting addresses and first-seen EOA registry (needs --full-block for from/to)")
@@ -82,7 +98,16 @@ func setOptionalFlags() {
 }
 
 func execute(cmd *cobra.Command, args []string) error {
-	sh, err := storage_handler.NewPgStorageHandler(connString, fullBlock)
+	db, err := sql.Open("postgres", connString)
+	if err != nil {
+		return fmt.Errorf("cannot open postgres db: %w", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("db ping error: %w", err)
+	}
+
+	sh, err := storage_handler.NewPgStorageHandler(db, fullBlock)
 	if err != nil {
 		return err
 	}
@@ -134,7 +159,15 @@ func execute(cmd *cobra.Command, args []string) error {
 	}
 
 	if erc20Stats {
-		opts = append(opts, syncer.WithErc20Stats(sh.DB(), erc20StatsBuffer))
+		backend := erc20backend.NewPgErc20Backend(db)
+
+		opts = append(opts, syncer.WithErc20Stats(backend),
+			syncer.WithErc20ProcessInterval(erc20ProcessInterval),
+			syncer.WithErc20WatchlistCheckInterval(erc20WatchlistCheckInterval))
+
+		if erc20StartFromTip {
+			opts = append(opts, syncer.WithErc20StartFromTip())
+		}
 	}
 
 	if entityStats {

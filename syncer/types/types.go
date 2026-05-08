@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
@@ -27,11 +28,13 @@ type Transaction struct {
 	BlockTimestamp       *hexutil.Uint64
 }
 
-// ReceiptLog is a minimal log object unmarshaled from eth_getTransactionReceipt ("logs").
 type ReceiptLog struct {
-	Address string   `json:"address"`
-	Topics  []string `json:"topics"`
-	Data    string   `json:"data"`
+	Address         string         `json:"address"`
+	Topics          []string       `json:"topics"`
+	Data            string         `json:"data"`
+	BlockNumber     hexutil.Uint64 `json:"blockNumber"`
+	TransactionHash string         `json:"transactionHash"`
+	Index           hexutil.Uint64 `json:"logIndex"`
 }
 
 type Block struct {
@@ -55,6 +58,17 @@ type Block struct {
 	MixHash          string         `json:"mixHash"`
 	BaseFeePerGas    *hexutil.Big   `json:"baseFeePerGas"`
 	Transactions     []*Transaction
+}
+
+type ERC20Token struct {
+	Address   string
+	Symbol    *string
+	Decimals  *uint8
+	Enabled   bool
+	IsPrivate bool
+	NextBlock uint64
+	CreatedAt time.Time
+	UpdatedAt *time.Time
 }
 
 func (b *Block) UnmarshalJSON(data []byte) error {
