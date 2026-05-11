@@ -57,9 +57,9 @@ func ratToDBString(r *big.Rat) string {
 // maxCirculationQuerySpanDays caps in-memory merge size for one API request (~1970→today ≈ 20k days).
 const maxCirculationQuerySpanDays = 25000
 
-// ensureCirculationCacheThroughLastCompleteHour extends chain.erc20_circulation_cumulative through
+// EnsureCirculationCacheThroughLastCompleteHour extends chain.erc20_circulation_cumulative through
 // the last completed UTC hour using iterative clamp; uses pg_advisory_xact_lock to serialize writers.
-func ensureCirculationCacheThroughLastCompleteHour(conn *sql.DB) error {
+func EnsureCirculationCacheThroughLastCompleteHour(conn *sql.DB) error {
 	lastComplete := lastCompleteHourUTC(time.Now())
 
 	var lastQuick sql.NullTime
@@ -335,13 +335,22 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 			Message: "Database connection failed",
 		}, errors.New("database connection failed")
 	}
+	var maxCached sql.NullTime
 
-	if err := ensureCirculationCacheThroughLastCompleteHour(conn); err != nil {
-		log.Printf("api_storage: circulation cache: %v", err)
+	if err := conn.QueryRow(`SELECT MAX(hour_utc) FROM chain.erc20_circulation_cumulative`).Scan(&maxCached); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("api_storage: cache readiness check: %v", err)
 		return &Erc20CirculationCumulativeResponse{
 			Code:    "500",
 			Message: "Database query failed",
 		}, err
+	}
+
+	if !maxCached.Valid {
+		return &Erc20CirculationCumulativeResponse{
+			Code:    "202",
+			Message: "Cache is being built, data not yet available",
+			Data:    Erc20CirculationCumulativeData{Page: req.Page, PageSize: req.PageSize},
+		}, nil
 	}
 
 	g := normalizeGranularity(req.Granularity)

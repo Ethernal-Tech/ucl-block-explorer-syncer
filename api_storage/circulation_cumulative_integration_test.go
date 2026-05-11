@@ -51,7 +51,7 @@ func TestEnsureCirculationCacheThroughLastCompleteHour_Integration(t *testing.T)
 
 	logCirculationIntegrationContext(t, db)
 
-	if err := ensureCirculationCacheThroughLastCompleteHour(db); err != nil {
+	if err := EnsureCirculationCacheThroughLastCompleteHour(db); err != nil {
 		t.Fatalf("ensureCirculationCacheThroughLastCompleteHour: %v", err)
 	}
 

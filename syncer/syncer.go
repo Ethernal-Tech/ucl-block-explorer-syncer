@@ -15,6 +15,7 @@ import (
 
 	abstractworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/abstract_worker"
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
+	circulationworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/circulation_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	prologworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/prolog_worker"
 	txworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/tx_worker"
@@ -243,6 +244,10 @@ type Syncer struct {
 	// default, 1.
 	maxTxWorkers uint64
 
+	// circulationPollInterval is how often (in milliseconds) the circulation worker
+	// checks for and backfills new completed hours into chain.erc20_circulation_cumulative.
+	circulationPollInterval uint64
+
 	// erc20Backend is the backend required for processing ERC-20 events. If nil, processing is
 	// disabled. For details, see the [Erc20Backend] interface documentation.
 	erc20Backend Erc20Backend
@@ -300,6 +305,8 @@ type Syncer struct {
 
 	// txpwHandle holds the handle for the transaction pool worker managed by the syncer.
 	txpwHandle *txPoolWorkerHandle
+
+	cwHandle *circulationWorkerHandle
 
 	// shutDownCh is closed to signal all workers (that is, their controller goroutines) to shut
 	// down gracefully.
@@ -460,6 +467,21 @@ func NewSyncer(
 		}
 
 		syncer.txpwHandle = txpwh
+	}
+
+	//circulation worker
+	{
+		cwh, err := syncer.createCirculationWorkerHandle(
+			0,
+			make(chan struct{}, 1),
+			make(chan struct{}, 1),
+		)
+
+		if err != nil {
+			return nil, err
+		}
+
+		syncer.cwHandle = cwh
 	}
 
 	return syncer, nil
@@ -1528,4 +1550,44 @@ func (s *Syncer) getBlock() *types.Block {
 	s.m.Unlock()
 
 	return block
+}
+
+type circulationWorkerHandle struct {
+	cw     *circulationworker.CirculationWorker
+	id     uint64
+	doneCh chan struct{}
+	crtlCh chan struct{}
+}
+
+func (s *Syncer) createCirculationWorkerHandle(
+	id uint64,
+	ctrlCh chan struct{},
+	doneCh chan struct{},
+) (*circulationWorkerHandle, error) {
+	opts := []circulationworker.CirculationWorkerOption{}
+
+	if s.circulationPollInterval != 0 {
+		opts = append(
+			opts, circulationworker.WithPollInterval(s.circulationPollInterval))
+	}
+
+	if s.logger != nil {
+		opts = append(opts, circulationworker.WithLogger(s.logger))
+	}
+
+	if id != 0 {
+		opts = append(opts, circulationworker.WithID(id))
+	}
+
+	cw, err := circulationworker.NewCirculationCacheWorker(s.erc20DB, ctrlCh, doneCh, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create circulation worker: %w", err)
+	}
+
+	return &circulationWorkerHandle{
+		cw:     cw,
+		id:     id,
+		crtlCh: ctrlCh,
+		doneCh: doneCh,
+	}, nil
 }
