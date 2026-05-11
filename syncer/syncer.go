@@ -1579,7 +1579,7 @@ func (s *Syncer) createCirculationWorkerHandle(
 		opts = append(opts, circulationworker.WithID(id))
 	}
 
-	cw, err := circulationworker.NewCirculationCacheWorker(s.erc20DB, ctrlCh, doneCh, opts...)
+	cw, err := circulationworker.NewCirculationCacheWorker(s.entityDB, ctrlCh, doneCh, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create circulation worker: %w", err)
 	}
