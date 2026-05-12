@@ -243,10 +243,6 @@ type Syncer struct {
 	// default, 1.
 	maxTxWorkers uint64
 
-	// circulationPollInterval is how often (in milliseconds) the circulation worker
-	// checks for and backfills new completed hours into chain.erc20_circulation_cumulative.
-	circulationPollInterval uint64
-
 	// erc20Backend is the backend required for processing ERC-20 events. If nil, processing is
 	// disabled. For details, see the [Erc20Backend] interface documentation.
 	erc20Backend Erc20Backend
