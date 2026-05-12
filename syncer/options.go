@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	erc20worker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/erc20_worker"
 	entitystatsworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/entity_stats_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 )
@@ -151,20 +150,58 @@ func WithMaxTxWorkers(maxTxWorkers uint64) SyncerOption {
 	}
 }
 
-// WithErc20Stats enables asynchronous ERC-20 Transfer aggregation after each committed block.
-// db must remain open for the syncer lifetime. buffer is the bounded queue depth; if zero, 64 is used.
-// When the queue is full, blocks are dropped and logged (indexing never blocks).
-func WithErc20Stats(db *sql.DB, buffer uint) SyncerOption {
+// WithErc20Stats configures the syncer to also track statistics for various ERC-20 tokens using
+// the provided backend. For additional information on the underlying aggregation process, see
+// the [Erc20Backend] interface documentation.
+func WithErc20Stats(backend Erc20Backend) SyncerOption {
 	return func(s *Syncer) error {
-		if db == nil {
-			return fmt.Errorf("erc20 stats database handle cannot be nil")
-		}
-		if buffer == 0 {
-			buffer = 64
+		if backend == nil {
+			return fmt.Errorf("erc20 backend must be provided")
 		}
 
-		s.erc20DB = db
-		s.erc20StatsCh = make(chan erc20worker.BlockJob, buffer)
+		s.erc20Backend = backend
+
+		return nil
+	}
+}
+
+// WithErc20WatchlistCheckInterval sets how often the syncer checks the ERC-20 watchlist for changes,
+// expressed in milliseconds. The interval must be between 200 and 900000 milliseconds, inclusive.
+// By default, 2000 milliseconds.
+func WithErc20WatchlistCheckInterval(interval uint64) SyncerOption {
+	return func(s *Syncer) error {
+		if interval < 200 || interval > 900000 {
+			return fmt.Errorf("watchlist check interval must be between 200ms and 15 minutes")
+		}
+
+		s.erc20WatchlistCheckInterval = interval
+
+		return nil
+	}
+}
+
+// WithErc20StartFromTip configures how the syncer initializes processing for ERC-20 tokens newly
+// added to the watchlist. By default (false), the syncer starts from the last processed block
+// for that token, or from block 0 if it has never been processed before. When set to true, the
+// syncer ignores historical data and starts processing from the current chain tip.
+func WithErc20StartFromTip() SyncerOption {
+	return func(s *Syncer) error {
+		s.erc20StartFromTip = true
+
+		return nil
+	}
+}
+
+// WithErc20ProcessInterval sets the delay between attempts to process new blocks for ERC-20
+// events when the requested block is not yet available, expressed in milliseconds. The interval
+// must be between 200 and 900000 milliseconds, inclusive. By default, 2000 milliseconds.
+func WithErc20ProcessInterval(interval uint64) SyncerOption {
+	return func(s *Syncer) error {
+		if interval < 200 || interval > 900000 {
+			return fmt.Errorf("erc20 process interval must be between 200ms and 15 minutes")
+		}
+
+		s.erc20ProcessInterval = interval
 
 		return nil
 	}

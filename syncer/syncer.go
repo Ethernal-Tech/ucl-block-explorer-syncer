@@ -5,6 +5,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math/big"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,8 +16,8 @@ import (
 
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
 	entitystatsworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/entity_stats_worker"
-	erc20worker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/erc20_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
+	prologworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/prolog_worker"
 	txworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/tx_worker"
 	txpoolworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/txpool_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
@@ -34,7 +37,7 @@ type StorageHandler interface {
 	// will either contain complete transaction objects or only their hashes. In the latter case,
 	// only the Hash field of each transaction is guaranteed to be correct, all other fields may
 	// contain any value, even correct ones, and should not be relied upon. When withTxs is set,
-	// only receipt-related fields of the transaction (i.e. Status) may contain any value, even
+	// only receipt-related fields of the transaction (e.g. Status) may contain any value, even
 	// correct ones, and should not be relied upon. In both previously mentioned cases BlockHash,
 	// BlockNumber and BlockTimestamp of each transaction are always correctly populated. If the
 	// method returns an error, the syncer will immediately shut down gracefully.
@@ -54,7 +57,7 @@ type StorageHandler interface {
 	// been fetched and deserialized. Depending on the configuration (withTx flag and the return
 	// value of [StorageHandler.ShouldFetchFullTransaction] method), fetching may include only
 	// the receipt or full transaction data. In the former case, only receipt-related fields
-	// (i.e. Status) together with Hash, BlockHash, BlockNumber and BlockTimestamp are guaranteed
+	// (e.g. Status) together with Hash, BlockHash, BlockNumber and BlockTimestamp are guaranteed
 	// to be correct, all other fields may contain any value, even correct ones, and should not
 	// be relied upon. When full transaction data is fetched, all fields are populated correctly.
 	// It is guaranteed that [StorageHandler.InsertBlock] will be called for the block these
@@ -72,16 +75,76 @@ type StorageHandler interface {
 	// 0x prefix.
 	ShouldFetchFullTransaction(hash string) bool
 
+	// [SCHEDULED FOR REMOVAL]
 	// InsertPoolTransactions is invoked every time the current state of the transaction pool is
 	// fetched, i.e. every time (pending and queued) transactions are retrieved and deserialized
 	// from it. If the method returns an error, the syncer will terminate immediately.
 	InsertPoolTransactions(pending, queued []*types.Transaction) error
 }
 
+// Erc20Backend defines the interface that must be implemented by any backend used for ERC-20
+// statistics processing. It is required when the syncer is configured with the [WithERC20Stats]
+// option. The syncer is capable of tracking mint, burn, and transfer statistics - aggregated
+// into UTC-hour buckets - for both private and non-private ERC-20 tokens. To do so correctly,
+// it requires a backend that satisfies this interface. For each tracked token, the syncer
+// creates a separate, independent internal instance responsible for monitoring that token's
+// activity. Since multiple such instances may run concurrently, all methods of this interface
+// must be safe for concurrent use.
+type Erc20Backend interface {
+	// GetWatchlist returns the list of ERC-20 tokens the syncer should track. Only tokens with
+	// the Enabled field set to true are actively tracked - for each private/normal token, the
+	// syncer maintains a separate internal instance responsible for collecting its statistics.
+	// On every call, the syncer compares the returned list against its current tracking state
+	// and starts or stops instances accordingly:
+	//   - If a token was being tracked (i.e. previously returned with Enabled set to true) but
+	//     now is not returned or returned with Enabled set to false, its tracking instance will
+	//     be shut down.
+	//   - If a token is returned with Enabled set to true and is not yet being tracked (i.e. was
+	//     not previously returned, or was previously returned with Enabled set to false), a new
+	//     tracking instance will be created, starting from the block defined by CurrentBlock.
+	//     Starting block can be overridden via [WithErc20StartFromTip].
+	// The CreatedAt and UpdatedAt fields are not used and may contain any value. Once returned,
+	// the list and the tokens within it must not be modified by the implementer (backend). If
+	// the method returns an error, the syncer will immediately shut down gracefully.
+	GetWatchlist() ([]*types.ERC20Token, error)
+
+	// GetTip returns the number of the last fully processed block - meaning all transactions
+	// and their receipts are available for that block. If the method returns an error, the syncer
+	// will immediately shut down gracefully.
+	GetTip() (uint64, error)
+
+	// GetBlock returns the block with the given number. Only the header fields are required to
+	// be correctly populated - transaction data is not used here because the syncer relies on
+	// [Erc20Backend.GetLogs] for event retrieval. If [Erc20Backend.GetLogs] were not available,
+	// full transaction data and receipts would be required to extract logs. Once returned, the
+	// block must not be modified by the caller. If the method returns an error, the syncer will
+	// immediately shut down gracefully.
+	GetBlock(number uint64) (*types.Block, error)
+
+	// GetLogs returns all logs emitted by the given token address in the given block that contain
+	// at least one of the provided topics. This method exists to leverage database indexing and
+	// selection for fast filtering and retrieval. Without this method, the syncer would have to
+	// fetch all logs within a block via [Erc20Backend.GetBlock] and perform the filtering itself.
+	// The returned logs are used directly for ERC-20 stats aggregation. If the method returns an
+	// error, the syncer will immediately shut down gracefully.
+	GetLogs(blockNum uint64, tokenAddr string, topics []string) ([]types.ReceiptLog, error)
+
+	// ProcessHourlyStat is invoked once per processed block for each tracked token. It persists
+	// the aggregated Transfer event counts and volumes for the UTC hour derived from the block
+	// timestamp. counts and volumes are keyed by transfer class: "transfer", "mint", or "burn".
+	ProcessHourlyStat(blockNum uint64,
+		token *types.ERC20Token,
+		hour time.Time,
+		counts map[string]uint64,
+		volumes map[string]*big.Int) error
+}
+
 // Syncer indexes an EVM-based blockchain by fetching and processing blocks and transactions via
-// block and transaction workers, persisting the data to a storage backend. It supports different
-// indexing strategies configurable through a set of constructor option functions (for example,
-// [WithPollInterval]), that can be passed to [NewSyncer].
+// block and transaction workers, persisting the data to a storage backend. Additional workers
+// can be enabled through constructor option functions - for example, [WithErc20Stats] enables
+// tracking of ERC-20 token statistics. It supports different indexing strategies configurable
+// through a set of constructor option functions (for example, [WithPollInterval]), that can be
+// passed to [NewSyncer].
 type Syncer struct {
 	// rpcURL is the Ethereum RPC endpoint URL used to establish a connection to the blockchain
 	// node. The underlying RPC client is created from this URL.
@@ -114,10 +177,12 @@ type Syncer struct {
 	// default, false.
 	tipOnly bool
 
+	// [SCHEDULED FOR REMOVAL]
 	// syncTxPool specifies whether the syncer should also fetch (pending) transactions from the
 	// transaction pool. By default, false.
 	syncTxPool bool
 
+	// [SCHEDULED FOR REMOVAL]
 	// txPoolPollInterval specifies how often the syncer attempts to fetch pending transactions
 	// from the transaction pool. By default, 2000 milliseconds.
 	txPoolPollInterval uint64
@@ -147,6 +212,24 @@ type Syncer struct {
 	// default, 1.
 	maxTxWorkers uint64
 
+	// erc20Backend is the backend required for processing ERC-20 events. If nil, processing is
+	// disabled. For details, see the [Erc20Backend] interface documentation.
+	erc20Backend Erc20Backend
+
+	// erc20WatchlistCheckInterval specifies how often the syncer checks the ERC-20 watchlist
+	// for changes, in milliseconds. By default, 2000 milliseconds.
+	erc20WatchlistCheckInterval uint64
+
+	// erc20StartFromTip controls the block from which the syncer begins processing ERC-20 events
+	// for a newly enabled token. When true, the syncer starts from the current tip of the chain,
+	// (the one get by [Erc20Backend.GetTip]), skipping all historical blocks. When false, it
+	// starts from block 0. By default, false.
+	erc20StartFromTip bool
+
+	// erc20ProcessInterval specifies how often the syncer attempts to process new blocks for
+	// ERC-20 events when the requested block is not yet available. By default, 2000 milliseconds.
+	erc20ProcessInterval uint64
+
 	// Internal fields used by the syncer:
 
 	// m, s, and l form an internal block queue used to pass blocks from the block worker, via
@@ -165,27 +248,16 @@ type Syncer struct {
 	// txwHandles holds the handles for all transaction workers managed by the syncer.
 	txwHandles []*txWorkerHandle
 
+	// erc20wHandles holds the handles for all erc20 workers managed by the syncer.
+	erc20wHandles map[string]*erc20WorkerHandle
+
 	// txpwHandle holds the handle for the transaction pool worker managed by the syncer.
 	txpwHandle *txPoolWorkerHandle
 
-	// shutDownBW is closed to signal block worker to shut down gracefully.
-	shutDownBW chan struct{}
-
-	// shutDownTXW is closed to signal all transaction workers to shut down gracefully.
-	shutDownTXW chan struct{}
-
-	// shutDownTXPW is closed to signal transaction pool worker to shut down gracefully.
-	shutDownTXPW chan struct{}
-
-	// closed indicates whether the shutdown channels have been closed and must only be accessed
-	// while holding mClosed, as channels can only be closed once.
-	closed  bool
-	mClosed sync.Mutex
-
-	// Optional ERC-20 daily stats (see [WithErc20Stats]); nil when disabled.
-	erc20DB      *sql.DB
-	erc20StatsCh chan erc20worker.BlockJob
-	erc20Wg      sync.WaitGroup
+	// shutDownCh is closed to signal all workers (that is, their controller goroutines) to shut
+	// down gracefully.
+	shutDownCh chan struct{}
+	once       sync.Once
 
 	// Optional entity / adoption stats (see [WithEntityStats]); nil when disabled.
 	entityDB      *sql.DB
@@ -203,13 +275,16 @@ type Syncer struct {
 //  3. WithTransactionWorkerStartBlock (default: 0)
 //  4. WithPollInterval (default: 2000 milliseconds)
 //  5. WithTipOnly (default: false)
-//  6. WithTxPool (default: disabled)
+//  6. WithTxPool (default: disabled) [SCHEDULED FOR REMOVAL]
 //  7. WithFullTransactions (default: false)
 //  8. WithRetry (default: first failure is treated as fatal)
 //  9. WithBatchSize (default: 1)
 //  10. WithMaxTxWorkers (default: 1)
 //  11. WithErc20Stats (default: disabled)
-//  12. WithEntityStats (default: disabled)
+//  12. WithErc20WatchlistCheckInterval (default: 2000 milliseconds)
+//  13. WithErc20StartFromTip (default: false)
+//  14. WithErc20ProcessInterval (default: 2000 milliseconds)
+//  15. WithEntityStats (default: disabled)
 func NewSyncer(
 	rpcURL string,
 	storage StorageHandler,
@@ -223,14 +298,16 @@ func NewSyncer(
 	}
 
 	syncer := &Syncer{
-		rpcURL:             rpcURL,
-		storage:            storage,
-		maxRetries:         1,
-		retryInterval:      2000,
-		batchSize:          1,
-		maxTxWorkers:       1,
-		pollInterval:       2000,
-		txPoolPollInterval: 2000,
+		rpcURL:                      rpcURL,
+		storage:                     storage,
+		maxRetries:                  1,
+		retryInterval:               2000,
+		batchSize:                   1,
+		maxTxWorkers:                1,
+		pollInterval:                2000,
+		txPoolPollInterval:          2000,
+		erc20WatchlistCheckInterval: 2000,
+		erc20ProcessInterval:        2000,
 	}
 
 	for _, o := range opts {
@@ -241,9 +318,7 @@ func NewSyncer(
 
 	syncer.s = make(chan struct{}, 1)
 	syncer.l = list.New()
-	syncer.shutDownBW = make(chan struct{})
-	syncer.shutDownTXW = make(chan struct{})
-	syncer.shutDownTXPW = make(chan struct{})
+	syncer.shutDownCh = make(chan struct{})
 
 	// Block worker handle construction.
 	{
@@ -299,6 +374,17 @@ func NewSyncer(
 		}
 	}
 
+	// ERC20 worker handles construction.
+	if syncer.erc20Backend != nil {
+		syncer.erc20wHandles = map[string]*erc20WorkerHandle{}
+
+		// Unlike the transaction workers, the number of tracked ERC-20 tokens (and therefore
+		// the number of ERC-20 workers) may change between the time the syncer is created and
+		// the time it is started. Therefore, the handles for ERC-20 workers are not initialized
+		// here but deferred until the syncer is started.
+	}
+
+	// [SCHEDULED FOR REMOVAL]
 	// Transaction pool worker handle construction.
 	if syncer.syncTxPool {
 		client, err := rpc.Dial(rpcURL)
@@ -324,10 +410,13 @@ func NewSyncer(
 	return syncer, nil
 }
 
-// Start starts the syncer by launching the block and transaction workers. It returns an error
-// if the syncer fails to start. Once running, the syncer operates until a fatal error occurs
-// or it is stopped externally. For details on how the syncer orchestrates and manages its
-// workers, see the detailed comments within this function.
+// Start starts the syncer by launching the block, transaction, and any additionally configured
+// workers (such as the ERC-20 stats workers). It returns an error if the syncer fails to start.
+// Workers that depend on runtime state, such as the ERC-20 stats workers - whose number depends
+// on the token watchlist at the time of startup, are initialized here rather than in [NewSyncer].
+// Once running, the syncer operates until a fatal error occurs or it is stopped externally. For
+// details on how the syncer orchestrates and manages its workers, see the detailed comments
+// within this function.
 func (s *Syncer) Start() error {
 	defer s.shutDown()
 
@@ -354,20 +443,6 @@ func (s *Syncer) Start() error {
 
 	s.log("started")
 
-	if s.erc20StatsCh != nil && s.erc20DB != nil {
-		s.erc20Wg.Add(1)
-
-		go func() {
-			defer s.erc20Wg.Done()
-
-			for job := range s.erc20StatsCh {
-				if err := erc20worker.ProcessBlock(context.Background(), s.erc20DB, job); err != nil {
-					s.log("erc20 stats: %v", err.Error())
-				}
-			}
-		}()
-	}
-
 	if s.entityStatsCh != nil && s.entityDB != nil {
 		s.entityWg.Add(1)
 
@@ -393,7 +468,8 @@ func (s *Syncer) Start() error {
 
 	wg := sync.WaitGroup{}
 
-	if s.syncTxPool {
+	// We don't care about txpool worker since it is scheduled for removal.
+	if s.erc20Backend != nil {
 		wg.Add(3)
 	} else {
 		wg.Add(2)
@@ -417,7 +493,7 @@ func (s *Syncer) Start() error {
 			s.log("block worker encountered a fatal error: %s", err.Error())
 
 			s.shutDownHandles()
-		case <-s.shutDownBW:
+		case <-s.shutDownCh:
 			close(s.bwHandle.ctrlCh)
 
 			<-s.bwHandle.doneCh
@@ -442,9 +518,6 @@ func (s *Syncer) Start() error {
 	go func() {
 		defer wg.Done()
 
-		if s.erc20StatsCh != nil {
-			defer close(s.erc20StatsCh)
-		}
 		if s.entityStatsCh != nil {
 			defer close(s.entityStatsCh)
 		}
@@ -462,9 +535,7 @@ func (s *Syncer) Start() error {
 			}
 
 			for range len(s.txwHandles) - int(numOfAlreadyDown) {
-				select {
-				case <-s.txwHandles[0].doneCh:
-				}
+				<-s.txwHandles[0].doneCh
 			}
 		}
 
@@ -494,7 +565,7 @@ func (s *Syncer) Start() error {
 			}
 
 			select {
-			case <-s.shutDownTXW:
+			case <-s.shutDownCh:
 				shutDownFn(0)
 
 				break break_for
@@ -557,20 +628,6 @@ func (s *Syncer) Start() error {
 				break
 			}
 
-			if s.erc20StatsCh != nil {
-				job := erc20worker.BlockJob{
-					BlockNumber: uint64(block.Number),
-					BlockTS:     uint64(block.Timestamp),
-					Txs:         block.Transactions,
-				}
-
-				select {
-				case s.erc20StatsCh <- job:
-				default:
-					s.log("erc20 stats queue full, dropped block %d", currentBlock)
-				}
-			}
-
 			if s.entityStatsCh != nil {
 				job := entitystatsworker.BlockJob{
 					BlockNumber: uint64(block.Number),
@@ -591,6 +648,239 @@ func (s *Syncer) Start() error {
 		}
 	}()
 
+	// ERC-20 worker controller goroutine - responsible for managing the lifecycle of ERC-20
+	// workers. ERC-20 worker handles are constructed here (deferred from the [Syncer.Start]).
+	// It has three responsibilities:
+	//
+	//  1. Periodically checks (as defined by [Syncer.erc20WatchlistCheckInterval]) the state
+	//     of the token watchlist and starts or stops workers accordingly.
+	//
+	//  2. Monitors all active ERC-20 workers for fatal errors. Upon detecting one, initiates
+	//     a graceful shutdown of all remaining ERC-20 workers and signals the other worker
+	//     controllers to shut down as well by closing [Syncer.shutDownCh].
+	//
+	//  3. Listens for a shutdown signal (closing of [Syncer.shutDownCh]) from the other worker
+	//     controllers. Upon receiving it, initiates a graceful shutdown of all ERC-20 workers.
+	if s.erc20Backend != nil {
+		go func() {
+			defer wg.Done()
+
+			// shutDownFn initiates a graceful shutdown of all active ERC-20 workers by closing
+			// their control channels and waiting for each to shut down. It also signals the
+			// other worker controllers to shut down by closing [Syncer.shutDownCh].
+			shutDownFn := func() {
+				s.shutDownHandles()
+
+				for _, handle := range s.erc20wHandles {
+					close(handle.ctrlCh)
+
+					select {
+					// It can happen that the ERC-20 worker encountered a fatal error in the
+					// meantime and has already shut down, in which case we would never receive
+					// a signal on the done channel.
+					case err := <-handle.errCh:
+						s.log("ERC-20 worker for token %s encountered a fatal error: %s",
+							*handle.token.Symbol,
+							err.Err.Error())
+					case <-handle.doneCh:
+					}
+				}
+			}
+
+			for {
+				select {
+				case <-s.shutDownCh:
+					shutDownFn()
+
+					return
+				default:
+				}
+
+				s.log("fetching token watchlist")
+
+				tokens, err := s.erc20Backend.GetWatchlist()
+				if err != nil {
+					s.log("failed to fetch the token watchlist: %s", err.Error())
+
+					shutDownFn()
+
+					return
+				}
+
+				s.log("token watchlist: %s", strings.Join(func() []string {
+					symbols := make([]string, 0, len(tokens))
+
+					for _, t := range tokens {
+						if !t.Enabled {
+							continue
+						}
+
+						symbol := "/"
+
+						if t.Symbol != nil {
+							symbol = *t.Symbol
+						}
+
+						symbols = append(symbols, fmt.Sprintf("%s (%s)", symbol, t.Address))
+					}
+
+					if len(symbols) == 0 {
+						return []string{"empty"}
+					}
+
+					return symbols
+				}(), ", "))
+
+				// Build a set of active token addresses from the current watchlist.
+				activeTokens := make(map[string]*types.ERC20Token, len(tokens))
+				for _, token := range tokens {
+					if token.Enabled {
+						activeTokens[token.Address] = token
+					}
+				}
+
+				// Stop workers for tokens that are no longer active, that is, that are removed
+				// from the watchlist or their Enabled field is set to false.
+				for address, handle := range s.erc20wHandles {
+					if _, ok := activeTokens[address]; ok {
+						continue
+					}
+
+					s.log("token %s disabled or removed from watchlist, stopping worker",
+						*handle.token.Symbol)
+
+					delete(s.erc20wHandles, address)
+
+					close(handle.ctrlCh)
+
+					select {
+					// It can happen that the ERC-20 worker encountered a fatal error in the
+					// meantime and has already shut down, in which case we would never receive
+					// a signal on the done channel.
+					case err := <-handle.errCh:
+						s.log("ERC-20 worker for token %s encountered a fatal error: %s",
+							*handle.token.Symbol,
+							err.Err.Error())
+
+						shutDownFn()
+
+						return
+					case <-handle.doneCh:
+					}
+
+					s.log("ERC-20 worker for token %s successfully shut down", *handle.token.Symbol)
+				}
+
+				// Start workers for tokens that are newly added or re-enabled in the watchlist.
+				for _, token := range activeTokens {
+					if _, ok := s.erc20wHandles[token.Address]; ok {
+						continue
+					}
+
+					if token.IsPrivate {
+						s.log("new private ERC-20 token %s (address: %s) in watchlist",
+							*token.Symbol,
+							token.Address)
+					} else {
+						s.log("new ERC-20 token %s (address: %s) in watchlist",
+							*token.Symbol,
+							token.Address)
+					}
+
+					if s.erc20StartFromTip {
+						tip, err := s.erc20Backend.GetTip()
+						if err != nil {
+							s.log("failed to fetch the tip of the chain: %s", err.Error())
+
+							shutDownFn()
+
+							return
+						}
+
+						token.NextBlock = tip
+					}
+
+					handle, err := s.createErc20WorkerHandle(token,
+						make(chan struct{}, 1),
+						make(chan string, 1),
+						make(chan struct {
+							Err error
+							Id  string
+						}))
+					if err != nil {
+						s.log("failed to create ERC-20 worker for token %s: %s",
+							*token.Symbol,
+							err.Error())
+
+						shutDownFn()
+
+						return
+					}
+
+					if err := handle.erc20w.Start(); err != nil {
+						s.log("failed to start ERC-20 worker for token %s: %s",
+							*token.Symbol,
+							err.Error())
+
+						shutDownFn()
+
+						return
+					}
+
+					s.erc20wHandles[token.Address] = handle
+
+					s.log("ERC-20 worker for token %s successfully created and started",
+						*token.Symbol)
+				}
+
+				// Since the number of ERC-20 workers is dynamic, a static select statement
+				// cannot be used. Instead, we build a dynamic one that waits on each worker's
+				// error channel and a timeout, after which a new watchlist check is performed.
+
+				cases := make([]reflect.SelectCase, 0, len(s.erc20wHandles)+1)
+
+				// Add timeout case.
+				cases = append(cases, reflect.SelectCase{
+					Dir: reflect.SelectRecv,
+					Chan: reflect.ValueOf(
+						time.After(
+							time.Duration(s.erc20WatchlistCheckInterval) * time.Millisecond)),
+				})
+
+				// Add errCh case for each handle.
+				for _, handle := range s.erc20wHandles {
+					cases = append(cases, reflect.SelectCase{
+						Dir:  reflect.SelectRecv,
+						Chan: reflect.ValueOf(handle.errCh),
+					})
+				}
+
+				chosen, val, _ := reflect.Select(cases)
+
+				// Timeout - proceed to next watchlist check.
+				if chosen == 0 {
+					continue
+				}
+
+				errVal := val.Interface().(struct {
+					Err error
+					Id  string
+				})
+
+				s.log("ERC-20 worker for token %s encountered a fatal error: %s",
+					*s.erc20wHandles[strings.Split(errVal.Id, ":")[0]].token.Symbol,
+					errVal.Err.Error())
+
+				delete(s.erc20wHandles, strings.Split(errVal.Id, ":")[0])
+
+				shutDownFn()
+
+				return
+			}
+		}()
+	}
+
+	// [SCHEDULED FOR REMOVAL]
 	// Tx pool worker controller goroutine - responsible for managing the tx pool worker lifecycle.
 	// It has two tasks/responsibilities:
 	//
@@ -610,7 +900,7 @@ func (s *Syncer) Start() error {
 				s.log("tx pool worker encountered a fatal error: %s", err.Error())
 
 				s.shutDownHandles()
-			case <-s.shutDownTXPW:
+			case <-s.shutDownCh:
 				close(s.txpwHandle.ctrlCh)
 
 				<-s.txpwHandle.doneCh
@@ -620,24 +910,15 @@ func (s *Syncer) Start() error {
 
 	wg.Wait()
 
-	s.erc20Wg.Wait()
 	s.entityWg.Wait()
 
 	return nil
 }
 
 func (s *Syncer) shutDownHandles() {
-	s.mClosed.Lock()
-
-	if !s.closed {
-		close(s.shutDownBW)
-		close(s.shutDownTXW)
-		close(s.shutDownTXPW)
-
-		s.closed = true
-	}
-
-	s.mClosed.Unlock()
+	s.once.Do(func() {
+		close(s.shutDownCh)
+	})
 }
 
 // shutDown gracefully shuts down the syncer.
@@ -861,6 +1142,164 @@ func (s *Syncer) createTxWorkerHandle(
 	}, nil
 }
 
+type erc20WorkerHandle struct {
+	erc20w *prologworker.PrologWorker
+	token  *types.ERC20Token
+	ctrlCh chan struct{}
+	doneCh chan string
+	errCh  chan struct {
+		Err error
+		Id  string
+	}
+}
+
+func (s *Syncer) createErc20WorkerHandle(
+	token *types.ERC20Token,
+	ctrlCh chan struct{},
+	doneCh chan string,
+	errCh chan struct {
+		Err error
+		Id  string
+	},
+) (*erc20WorkerHandle, error) {
+	// In a standard workflow, getBlockFn would return a full block containing all transactions
+	// and their respective receipts (logs), leaving the worker to filter them.
+	//
+	// To optimize performance, we leverage database indexing via [Erc20Backend.GetLogs] to fetch
+	// only the relevant logs, bypassing the need for the worker to scan every log in the block.
+	//
+	// We "trick" the worker by:
+	// 1. returning a block with a single dummy transaction containing our pre-filtered logs, and
+	// 2. passing a 'nil' filter to the worker's constructor, ensuring it forwards all logs from
+	//    the block (that is, our dummy transaction) directly to processLogsFn without additional
+	//    overhead.
+	getBlockFn := func(blockNum uint64) (*types.Block, error) {
+		tip, err := s.erc20Backend.GetTip()
+		if err != nil {
+			return nil, err
+		}
+
+		// GetTip returns 0 both when not even one block has been processed yet and when the last
+		// processed block is the genesis block. To avoid ambiguity, we wait until at least block
+		// 1 is available.
+		if tip == 0 {
+			return nil, nil
+		}
+
+		// Wait if the block hasn't been processed by the main syncer yet.
+		if tip < blockNum {
+			return nil, nil
+		}
+
+		block, err := s.erc20Backend.GetBlock(blockNum)
+		if err != nil {
+			return nil, err
+		}
+
+		// Fetch only Transfer logs (covers mint, burn, and transfer events). Topic: Keccak-256
+		// of "Transfer(address,address,uint256)".
+		transferTopic := "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
+		logs, err := s.erc20Backend.GetLogs(blockNum, token.Address, []string{transferTopic})
+		if err != nil {
+			return nil, err
+		}
+
+		// Encapsulate logs in a dummy transaction. This satisfies the worker's expectation that
+		// logs are tied to block transactions, while bypassing further filtering.
+		block.Transactions = []*types.Transaction{
+			{Hash: "dummy", Logs: logs},
+		}
+
+		return block, nil
+	}
+
+	processLogsFn := func(block *types.Block, logs []*types.ReceiptLog) error {
+		if token.IsPrivate {
+			// TODO: handle private tokens
+
+			return nil
+		}
+
+		// We don't want to process genesis block.
+		if block.Number == 0 {
+			return nil
+		}
+
+		counts := map[string]uint64{
+			"transfer": 0,
+			"mint":     0,
+			"burn":     0,
+		}
+
+		volumes := map[string]*big.Int{
+			"transfer": big.NewInt(0),
+			"mint":     big.NewInt(0),
+			"burn":     big.NewInt(0),
+		}
+
+		for _, log := range logs {
+			from, to, value, ok := helper.DecodeTransferLog(log.Topics, log.Data)
+			if !ok {
+				s.log("unexpected non-Transfer log for token, skipping")
+
+				continue
+			}
+
+			if from == helper.ZeroAddr && to == helper.ZeroAddr {
+				continue
+			}
+
+			class := helper.ClassifyTransfer(from, to)
+
+			counts[class]++
+			volumes[class].Add(volumes[class], value)
+		}
+
+		hour := time.Unix(int64(block.Timestamp), 0).UTC().Truncate(time.Hour)
+
+		return s.erc20Backend.ProcessHourlyStat(
+			uint64(block.Number),
+			token,
+			hour,
+			counts,
+			volumes)
+	}
+
+	opts := []prologworker.PrologWorkerOption{
+		prologworker.WithID(token.Address + ":" + *token.Symbol),
+		prologworker.WithStartBlock(token.NextBlock),
+		prologworker.WithProcessInterval(s.erc20ProcessInterval),
+		prologworker.WithWaitOnlyOnNil(),
+	}
+
+	if s.logger != nil {
+		opts = append(opts, prologworker.WithLogger(s.logger))
+	}
+
+	erc20w, err := prologworker.NewPrologWorker(
+		getBlockFn,
+		processLogsFn,
+		nil, // nil because GetLogs inside getBlockFn already pre-filters the data.
+		ctrlCh,
+		doneCh,
+		errCh,
+		opts...,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot create ERC-20 worker: %w", err)
+	}
+
+	return &erc20WorkerHandle{
+		erc20w,
+		token,
+		ctrlCh,
+		doneCh,
+		errCh,
+	}, nil
+}
+
 func (s *Syncer) addBlock(block *types.Block) {
 	s.m.Lock()
 
@@ -884,13 +1323,13 @@ func (s *Syncer) getBlock() *types.Block {
 		select {
 		case <-s.s:
 			select {
-			case <-s.shutDownTXW:
+			case <-s.shutDownCh:
 				return nil
 			default:
 			}
 
 			s.m.Lock()
-		case <-s.shutDownTXW:
+		case <-s.shutDownCh:
 			return nil
 		}
 	}

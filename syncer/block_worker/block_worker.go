@@ -260,7 +260,7 @@ func (w *BlockWorker) Start() error {
 				}
 
 			default:
-				//w.log("tip of the chain, sleep")
+				// TODO: handle control signals from ctrlCh during sleep
 
 				// No block available yet (tip of the chain). Wait before trying again.
 				time.Sleep(time.Duration(w.pollInterval) * time.Millisecond)

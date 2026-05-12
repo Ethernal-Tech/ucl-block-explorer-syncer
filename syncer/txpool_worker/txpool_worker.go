@@ -11,6 +11,7 @@ import (
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 )
 
+// [SCHEDULED FOR REMOVAL]
 // TxPoolWorker is a long-lived worker that periodically fetches the transaction pool from an
 // EVM-based node. It can be paused and resumed via [TxPoolWorker.ctrlCh].
 type TxPoolWorker struct {
