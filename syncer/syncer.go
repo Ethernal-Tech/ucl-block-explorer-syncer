@@ -474,7 +474,6 @@ func NewSyncer(
 // within this function.
 func (s *Syncer) Start() error {
 	defer s.shutDown()
-	s.log("STARTED")
 
 	if s.storage == nil {
 		return fmt.Errorf(
