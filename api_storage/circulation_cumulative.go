@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// Fixed lock id for erc20_circulation_cumulative backfill (single-writer extension).
-const circulationCacheAdvisoryLockKey int64 = 4122017
-
 func utcCalendarDate(t time.Time) time.Time {
 	t = t.UTC()
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
