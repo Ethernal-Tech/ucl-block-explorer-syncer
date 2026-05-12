@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS chain.erc20_hourly_stats (
     burn_count BIGINT NOT NULL DEFAULT 0,
     burn_volume_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    cumulative_circulation NUMERIC NOT NULL DEFAULT 0,
     PRIMARY KEY (token_address, hour_utc)
 );
 

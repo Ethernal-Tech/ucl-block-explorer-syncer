@@ -149,16 +149,28 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 	defer tx.Rollback()
 
 	_, err = tx.Exec(`
+		WITH prev AS (
+			SELECT COALESCE(
+				(SELECT cumulative_circulation
+				 FROM chain.erc20_hourly_stats
+				 WHERE token_address = $1 AND hour_utc < $2::timestamptz
+				 ORDER BY hour_utc DESC
+				 LIMIT 1),
+				0
+			) AS val
+		)
 		INSERT INTO chain.erc20_hourly_stats (
 			token_address, hour_utc,
 			transfer_count, transfer_volume_raw,
 			mint_count, mint_volume_raw,
-			burn_count, burn_volume_raw
+			burn_count, burn_volume_raw,
+			cumulative_circulation
 		) VALUES (
 			$1, $2::timestamptz,
 			$3, $4,
 			$5, $6,
-			$7, $8
+			$7, $8,
+			GREATEST((SELECT val FROM prev) + ($6::numeric - $8::numeric) / (10::numeric ^ $9), 0)
 		)
 		ON CONFLICT (token_address, hour_utc) DO UPDATE SET
 			transfer_count = chain.erc20_hourly_stats.transfer_count + EXCLUDED.transfer_count,
@@ -167,6 +179,13 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 			mint_volume_raw = chain.erc20_hourly_stats.mint_volume_raw + EXCLUDED.mint_volume_raw,
 			burn_count = chain.erc20_hourly_stats.burn_count + EXCLUDED.burn_count,
 			burn_volume_raw = chain.erc20_hourly_stats.burn_volume_raw + EXCLUDED.burn_volume_raw,
+			cumulative_circulation = GREATEST(
+				(SELECT val FROM prev)
+				+ (chain.erc20_hourly_stats.mint_volume_raw + EXCLUDED.mint_volume_raw
+				   - chain.erc20_hourly_stats.burn_volume_raw - EXCLUDED.burn_volume_raw)::numeric
+				  / (10::numeric ^ $9),
+				0
+			),
 			updated_at = CURRENT_TIMESTAMP
 	`,
 		token.Address,
@@ -174,6 +193,7 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 		counts["transfer"], volumes["transfer"].String(),
 		counts["mint"], volumes["mint"].String(),
 		counts["burn"], volumes["burn"].String(),
+		token.Decimals,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert hourly stat for token %s: %w", token.Address, err)

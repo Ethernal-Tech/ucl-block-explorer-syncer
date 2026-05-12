@@ -244,20 +244,3 @@ func WithEoaActivityStartBlock(block uint64) SyncerOption {
 		return nil
 	}
 }
-
-// WithCirculationPollInterval configures the syncer to use the provided polling interval for fetching
-// circulation erc20 stats, expressed in milliseconds. The interval must be between 200 and 900000 milliseconds,
-// inclusive. By default, the polling interval is set to 60000 milliseconds.
-func WithCirculationPollInterval(pollInterval uint64) SyncerOption {
-	return func(s *Syncer) error {
-		if pollInterval < 200 {
-			return fmt.Errorf("poll interval must be at least 200 milliseconds")
-		} else if pollInterval > 900000 {
-			return fmt.Errorf("poll interval must not exceed 900000 milliseconds (15 minutes)")
-		}
-
-		s.circulationPollInterval = pollInterval
-
-		return nil
-	}
-}

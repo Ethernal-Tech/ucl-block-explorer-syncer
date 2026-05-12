@@ -145,7 +145,6 @@ func execute(cmd *cobra.Command, args []string) error {
 		syncer.WithMaxTxWorkers(txWorkers),
 		syncer.WithBlockWorkerStartBlock(*bwStartBlock),
 		syncer.WithTransactionkWorkerStartBlock(*txwStartBlock),
-		syncer.WithCirculationPollInterval(circulationPollInterval),
 	}
 
 	if logging {
@@ -193,7 +192,9 @@ func execute(cmd *cobra.Command, args []string) error {
 	}
 
 	if syn, err := syncer.NewSyncer(rpcUrl, sh, opts...); err == nil {
-		syn.Start()
+		if err := syn.Start(); err != nil {
+			return err
+		}
 	} else {
 		return err
 	}
