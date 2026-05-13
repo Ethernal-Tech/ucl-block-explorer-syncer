@@ -113,3 +113,20 @@ CREATE TABLE IF NOT EXISTS chain.entity_hour_participation (
 );
 
 CREATE INDEX IF NOT EXISTS idx_entity_hour_participation_hour ON chain.entity_hour_participation(hour_utc DESC);
+
+-- Earliest UTC hour we observed each EOA (contracts never inserted — eth_getCode non-empty at sighting block).
+CREATE TABLE IF NOT EXISTS chain.eoa_first_seen (
+    address VARCHAR(42) PRIMARY KEY,
+    first_seen_hour_utc TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_eoa_first_seen_hour ON chain.eoa_first_seen(first_seen_hour_utc DESC);
+
+CREATE TABLE IF NOT EXISTS chain.validator_metadata (
+    address VARCHAR(42) NOT NULL PRIMARY KEY,
+    name TEXT,
+    institution TEXT,
+    region TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	if s.cfg.DB != nil {
 		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.handleAdminErc20Watchlist)
+		mux.HandleFunc("/admin/v1/validators/", s.handleAdminValidators)
 	}
 	mux.Handle("/", http.HandlerFunc(s.handle))
 	mux.HandleFunc("/ws", s.handleWS)
