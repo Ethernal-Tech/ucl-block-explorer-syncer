@@ -76,6 +76,10 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 		out, err = h.Explorer.GetOnboardingEntityDailyStats(req)
 	case "explorer_getValidatorMetadata":
 		out, err = h.Explorer.GetValidatorMetadata()
+	case "explorer_getValidatorUtilization":
+		var req *api_storage.ValidatorUtilizationRequest
+		parseOptionalObject(params, &req)
+		out, err = h.Explorer.GetValidatorUtilization(req)
 	default:
 		return nil, NewMethodNotFoundError(method)
 	}
