@@ -814,57 +814,98 @@ func getEntityDailyStatsFromTable(conn *sql.DB, table string, req EntityDailySta
 
 	trunc := dateTruncField(g)
 
+	// Both paths now query entity_hour_participation.
+	// For "eoa_first_seen" we derive first_seen as MIN(hour_utc) per address,
+	// then bucket/count those first-seen timestamps.
+	isFirstSeen := table == "eoa_first_seen"
+
+	// Build the time-range WHERE clause.
+	// For participation: filter directly on hour_utc.
+	// For first-seen: filter on the derived MIN(hour_utc), applied in HAVING / outer WHERE.
 	where := "WHERE 1=1"
 	args := []interface{}{}
 	n := 1
-	col := "e.hour_utc"
-	if table == "eoa_first_seen" {
-		col = "e.first_seen_hour_utc"
+
+	if isFirstSeen {
+		// Time filters apply to the derived first_seen_hour, built as outer WHERE below.
+		havingClause := "WHERE 1=1"
+		if fromPtr != nil {
+			havingClause += fmt.Sprintf(" AND first_seen_hour >= $%d::timestamptz", n)
+			args = append(args, fromPtr.UTC().Format(time.RFC3339))
+			n++
+		}
+		if toExPtr != nil {
+			havingClause += fmt.Sprintf(" AND first_seen_hour < $%d::timestamptz", n)
+			args = append(args, toExPtr.UTC().Format(time.RFC3339))
+			n++
+		}
+
+		// CTE: one row per address with its first-seen hour.
+		// Outer query buckets and counts just like before.
+		cte := `WITH eoa_first AS (
+			SELECT address, MIN(hour_utc) AS first_seen_hour
+			FROM chain.entity_hour_participation
+			GROUP BY address
+		)`
+
+		countQuery := fmt.Sprintf(`%s
+			SELECT COUNT(*) FROM (
+				SELECT 1 FROM eoa_first e
+				%s
+				GROUP BY date_trunc('%s', e.first_seen_hour, 'UTC')
+			) sub`, cte, havingClause, trunc)
+
+		listQuery := fmt.Sprintf(`%s
+			SELECT (date_trunc('%s', e.first_seen_hour, 'UTC'))::timestamptz,
+				COUNT(*)::bigint
+			FROM eoa_first e
+			%s
+			GROUP BY date_trunc('%s', e.first_seen_hour, 'UTC')
+			ORDER BY 1 DESC
+			LIMIT $%d OFFSET $%d`, cte, trunc, havingClause, trunc, n, n+1)
+
+		return executeEntityStatsQuery(conn, countQuery, listQuery, args, req, g)
 	}
+
+	// --- participation path (unchanged logic) ---
 	if fromPtr != nil {
-		where += fmt.Sprintf(" AND %s >= $%d::timestamptz", col, n)
+		where += fmt.Sprintf(" AND e.hour_utc >= $%d::timestamptz", n)
 		args = append(args, fromPtr.UTC().Format(time.RFC3339))
 		n++
 	}
 	if toExPtr != nil {
-		where += fmt.Sprintf(" AND %s < $%d::timestamptz", col, n)
+		where += fmt.Sprintf(" AND e.hour_utc < $%d::timestamptz", n)
 		args = append(args, toExPtr.UTC().Format(time.RFC3339))
 		n++
 	}
 
-	var countQuery, listQuery string
-	if table == "entity_hour_participation" {
-		countQuery = fmt.Sprintf(`
-			SELECT COUNT(*) FROM (
-				SELECT 1 FROM chain.entity_hour_participation e
-				%s
-				GROUP BY date_trunc('%s', e.hour_utc, 'UTC')
-			) sub`, where, trunc)
-		listQuery = fmt.Sprintf(`
-			SELECT (date_trunc('%s', e.hour_utc, 'UTC'))::timestamptz,
-				COUNT(DISTINCT e.address)::bigint
-			FROM chain.entity_hour_participation e
+	countQuery := fmt.Sprintf(`
+		SELECT COUNT(*) FROM (
+			SELECT 1 FROM chain.entity_hour_participation e
 			%s
 			GROUP BY date_trunc('%s', e.hour_utc, 'UTC')
-			ORDER BY 1 DESC
-			LIMIT $%d OFFSET $%d`, trunc, where, trunc, n, n+1)
-	} else {
-		countQuery = fmt.Sprintf(`
-			SELECT COUNT(*) FROM (
-				SELECT 1 FROM chain.eoa_first_seen e
-				%s
-				GROUP BY date_trunc('%s', e.first_seen_hour_utc, 'UTC')
-			) sub`, where, trunc)
-		listQuery = fmt.Sprintf(`
-			SELECT (date_trunc('%s', e.first_seen_hour_utc, 'UTC'))::timestamptz,
-				COUNT(*)::bigint
-			FROM chain.eoa_first_seen e
-			%s
-			GROUP BY date_trunc('%s', e.first_seen_hour_utc, 'UTC')
-			ORDER BY 1 DESC
-			LIMIT $%d OFFSET $%d`, trunc, where, trunc, n, n+1)
-	}
+		) sub`, where, trunc)
 
+	listQuery := fmt.Sprintf(`
+		SELECT (date_trunc('%s', e.hour_utc, 'UTC'))::timestamptz,
+			COUNT(DISTINCT e.address)::bigint
+		FROM chain.entity_hour_participation e
+		%s
+		GROUP BY date_trunc('%s', e.hour_utc, 'UTC')
+		ORDER BY 1 DESC
+		LIMIT $%d OFFSET $%d`, trunc, where, trunc, n, n+1)
+
+	return executeEntityStatsQuery(conn, countQuery, listQuery, args, req, g)
+}
+
+// executeEntityStatsQuery runs the count + list queries and assembles the response.
+func executeEntityStatsQuery(
+	conn *sql.DB,
+	countQuery, listQuery string,
+	args []interface{},
+	req EntityDailyStatsRequest,
+	g string,
+) (*EntityDailyStatsResponse, error) {
 	var total int64
 	if err := conn.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		log.Printf("api_storage: entity stats count: %v", err)
@@ -998,8 +1039,8 @@ func GetErc20Watchlist() (*Erc20WatchlistResponse, error) {
 	}
 
 	return &Erc20WatchlistResponse{
-		Code: "200",
-		Data: Erc20WatchlistData{List: list},
+		Code:    "200",
+		Data:    Erc20WatchlistData{List: list},
 		Message: "Success",
 	}, nil
 }
