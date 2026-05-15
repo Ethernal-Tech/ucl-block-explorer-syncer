@@ -1,4 +1,4 @@
-TRUNCATE chain.blocks, chain.transactions, chain.metadata, chain.transaction_logs, chain.erc20_hourly_stats, chain.erc20_watchlist;
+TRUNCATE chain.blocks, chain.transactions, chain.metadata, chain.transaction_logs, chain.erc20_hourly_stats, chain.erc20_watchlist, chain.entity_hour_participation;
 
 SELECT
     LEFT(hash, 10) AS hash,

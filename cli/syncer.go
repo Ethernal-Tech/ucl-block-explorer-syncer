@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
+	eoaactivitybackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/eoa_activity_backend"
 	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/storage_handler"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer"
@@ -26,8 +27,8 @@ var (
 	erc20WatchlistCheckInterval uint64
 	erc20StartFromTip           bool
 	erc20ProcessInterval        uint64
-	entityStats                 bool
-	entityStatsBuffer           uint
+	eoaActivityStats            bool
+	eoaActivityProcessInterval  uint64
 )
 
 var syncerCommand = &cobra.Command{
@@ -90,11 +91,11 @@ func setOptionalFlags() {
 	syncerCommand.Flags().Uint64Var(&erc20ProcessInterval, "erc20-process-interval", 2000,
 		"how often the syncer retries processing a block for ERC-20 events when it is not yet available, in milliseconds")
 
-	syncerCommand.Flags().BoolVar(&entityStats, "entity-stats", false,
-		"after each block, upsert per-day unique transacting addresses and first-seen EOA registry (needs --full-block for from/to)")
+	syncerCommand.Flags().BoolVar(&eoaActivityStats, "eoa-activity-stats", false,
+		"enable EOA activity tracking, recording the UTC hours in which each EOA address participated in a transaction")
 
-	syncerCommand.Flags().UintVar(&entityStatsBuffer, "entity-stats-buffer", 64,
-		"bounded queue depth for entity stats jobs; when full, blocks are dropped")
+	syncerCommand.Flags().Uint64Var(&eoaActivityProcessInterval, "eoa-activity-process-interval", 2000,
+		"how often the syncer retries processing a block for EOA activity statistics when it is not yet available, in milliseconds")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
@@ -170,8 +171,20 @@ func execute(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if entityStats {
-		opts = append(opts, syncer.WithEntityStats(sh.DB(), entityStatsBuffer))
+	if eoaActivityStats {
+		backend := eoaactivitybackend.NewPgEoaActivityBackend(db)
+
+		block, err := backend.GetLastProcessedBlock()
+		if err != nil {
+			return err
+		}
+
+		if block != nil {
+			opts = append(opts, syncer.WithEoaActivityStartBlock(*block+1))
+		}
+
+		opts = append(opts, syncer.WithEoaActivityStats(backend),
+			syncer.WithEoaActivityProcessInterval(eoaActivityProcessInterval))
 	}
 
 	if syn, err := syncer.NewSyncer(rpcUrl, sh, opts...); err == nil {

@@ -3,7 +3,6 @@ package syncer
 import (
 	"container/list"
 	"context"
-	"database/sql"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -11,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 
+	abstractworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/abstract_worker"
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
-	entitystatsworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/entity_stats_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	prologworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/prolog_worker"
 	txworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/tx_worker"
@@ -101,7 +100,7 @@ type Erc20Backend interface {
 	//     be shut down.
 	//   - If a token is returned with Enabled set to true and is not yet being tracked (i.e. was
 	//     not previously returned, or was previously returned with Enabled set to false), a new
-	//     tracking instance will be created, starting from the block defined by CurrentBlock.
+	//     tracking instance will be created, starting from the block defined by NextBlock.
 	//     Starting block can be overridden via [WithErc20StartFromTip].
 	// The CreatedAt and UpdatedAt fields are not used and may contain any value. Once returned,
 	// the list and the tokens within it must not be modified by the implementer (backend). If
@@ -115,28 +114,60 @@ type Erc20Backend interface {
 
 	// GetBlock returns the block with the given number. Only the header fields are required to
 	// be correctly populated - transaction data is not used here because the syncer relies on
-	// [Erc20Backend.GetLogs] for event retrieval. If [Erc20Backend.GetLogs] were not available,
+	// [Erc20Backend.GetLogs] for log retrieval. If [Erc20Backend.GetLogs] were not available,
 	// full transaction data and receipts would be required to extract logs. Once returned, the
-	// block must not be modified by the caller. If the method returns an error, the syncer will
-	// immediately shut down gracefully.
+	// block must not be modified by the implementer (backend). If the method returns an error,
+	// the syncer will immediately shut down gracefully.
 	GetBlock(number uint64) (*types.Block, error)
 
 	// GetLogs returns all logs emitted by the given token address in the given block that contain
 	// at least one of the provided topics. This method exists to leverage database indexing and
 	// selection for fast filtering and retrieval. Without this method, the syncer would have to
 	// fetch all logs within a block via [Erc20Backend.GetBlock] and perform the filtering itself.
-	// The returned logs are used directly for ERC-20 stats aggregation. If the method returns an
-	// error, the syncer will immediately shut down gracefully.
+	// The returned logs are used directly for ERC-20 stats aggregation. Once returned, the list
+	// and the logs within it must not be modified by the implementer (backend). If the method
+	// returns an error, the syncer will immediately shut down gracefully.
 	GetLogs(blockNum uint64, tokenAddr string, topics []string) ([]types.ReceiptLog, error)
 
-	// ProcessHourlyStat is invoked once per processed block for each tracked token. It persists
-	// the aggregated Transfer event counts and volumes for the UTC hour derived from the block
-	// timestamp. counts and volumes are keyed by transfer class: "transfer", "mint", or "burn".
+	// ProcessHourlyStat is invoked once per processed block for each tracked token. It should
+	// process the aggregated Transfer event counts and volumes for the UTC hour derived from
+	// the block timestamp. counts and volumes are keyed by transfer class: "transfer", "mint",
+	// or "burn".
 	ProcessHourlyStat(blockNum uint64,
 		token *types.ERC20Token,
 		hour time.Time,
 		counts map[string]uint64,
 		volumes map[string]*big.Int) error
+}
+
+// EoaActivityBackend defines the interface that must be implemented by any backend used for EOA
+// activity tracking. It is required when the syncer is configured with the [WithEoaActivityStats]
+// option. The syncer sequentially retrieves transaction participants (sender and receiver) for
+// each block via [EoaActivityBackend.GetBlockParticipants], filters out non-EOA addresses, and
+// forwards the resulting list of EOA addresses to [EoaActivityBackend.RecordEOAActivity] for
+// further processing. The backend is solely responsible for defining what statistics are derived
+// and persisted from the provided data.
+type EoaActivityBackend interface {
+	// GetBlockParticipants returns the list of transaction participants (from and to addresses)
+	// for the given block. The method must only return data for blocks that have been fully
+	// processed - meaning all transactions and their receipts are available. If the requested
+	// block has not yet been fully processed, nil must be returned without an error, signaling
+	// the syncer to wait before retrying. Once returned, the list and the participants within
+	// it must not be modified by the implementer (backend). If the method returns an error,
+	// the syncer will immediately shut down gracefully.
+	GetBlockParticipants(blockNum uint64) ([]*types.BlockParticipant, error)
+
+	// FilterKnownEOAs returns the subset of the provided addresses that are already known, that
+	// is, already being tracked by the backend. Once returned, the list must not be modified
+	// by the implementer (backend). If the method returns an error, the syncer will immediately
+	// shut down gracefully.
+	FilterKnownEOAs(addresses []string) ([]string, error)
+
+	// RecordEOAActivity is invoked once per processed block. The provided addresses represent
+	// the EOA addresses that were active in the given block. The backend is responsible for
+	// deriving and persisting any statistics from this data. If the method returns an error,
+	// the syncer will immediately shut down gracefully.
+	RecordEOAActivity(blockNum uint64, addresses []string) error
 }
 
 // Syncer indexes an EVM-based blockchain by fetching and processing blocks and transactions via
@@ -221,14 +252,27 @@ type Syncer struct {
 	erc20WatchlistCheckInterval uint64
 
 	// erc20StartFromTip controls the block from which the syncer begins processing ERC-20 events
-	// for a newly enabled token. When true, the syncer starts from the current tip of the chain,
-	// (the one get by [Erc20Backend.GetTip]), skipping all historical blocks. When false, it
-	// starts from block 0. By default, false.
+	// for a newly enabled token. When true, the syncer starts from the current tip of the chain
+	// (retrieved via [Erc20Backend.GetTip]), skipping all historical blocks. When false, it
+	// starts from the block defined by the token's NextBlock field in the watchlist. By default,
+	// false.
 	erc20StartFromTip bool
 
-	// erc20ProcessInterval specifies how often the syncer attempts to process new blocks for
-	// ERC-20 events when the requested block is not yet available. By default, 2000 milliseconds.
+	// erc20ProcessInterval specifies how long the syncer waits before retrying to process a block
+	// for ERC-20 events when it is not yet available. By default, 2000 milliseconds.
 	erc20ProcessInterval uint64
+
+	// eoaActivityBackend is the backend required for processing EOA activities. If nil, processing
+	// is disabled. For details, see the [EoaActivityBackend] interface documentation.
+	eoaActivityBackend EoaActivityBackend
+
+	// eoaActivityProcessInterval specifies how long the syncer waits before retrying to process a
+	// block for EOA activity statistics when it is not yet available. By default, 2000 milliseconds.
+	eoaActivityProcessInterval uint64
+
+	// eoaActivityStartBlock is the block number from which the EOA activity worker begin processing.
+	// By default, 0.
+	eoaActivityStartBlock uint64
 
 	// Internal fields used by the syncer:
 
@@ -251,6 +295,9 @@ type Syncer struct {
 	// erc20wHandles holds the handles for all erc20 workers managed by the syncer.
 	erc20wHandles map[string]*erc20WorkerHandle
 
+	// eoaawHandle holds the handle for the EOA activity worker managed by the syncer.
+	eoaawHandle *eoaActivityWorkerHandle
+
 	// txpwHandle holds the handle for the transaction pool worker managed by the syncer.
 	txpwHandle *txPoolWorkerHandle
 
@@ -258,11 +305,6 @@ type Syncer struct {
 	// down gracefully.
 	shutDownCh chan struct{}
 	once       sync.Once
-
-	// Optional entity / adoption stats (see [WithEntityStats]); nil when disabled.
-	entityDB      *sql.DB
-	entityStatsCh chan entitystatsworker.BlockJob
-	entityWg      sync.WaitGroup
 }
 
 // NewSyncer constructs a new [Syncer] instance. rpcURL must be a valid RPC endpoint URL used
@@ -284,7 +326,9 @@ type Syncer struct {
 //  12. WithErc20WatchlistCheckInterval (default: 2000 milliseconds)
 //  13. WithErc20StartFromTip (default: false)
 //  14. WithErc20ProcessInterval (default: 2000 milliseconds)
-//  15. WithEntityStats (default: disabled)
+//  15. WithEoaActivityStats (default: disabled)
+//  16. WithEoaActivityProcessInterval (default: 2000 milliseconds)
+//  17. WithEoaActivityStartBlock (default: 0)
 func NewSyncer(
 	rpcURL string,
 	storage StorageHandler,
@@ -308,6 +352,7 @@ func NewSyncer(
 		txPoolPollInterval:          2000,
 		erc20WatchlistCheckInterval: 2000,
 		erc20ProcessInterval:        2000,
+		eoaActivityProcessInterval:  2000,
 	}
 
 	for _, o := range opts {
@@ -384,6 +429,16 @@ func NewSyncer(
 		// here but deferred until the syncer is started.
 	}
 
+	// EOA activity worker handle construction.
+	if syncer.eoaActivityBackend != nil {
+		eoaawh, err := syncer.createEoaActivityWorkerHandle()
+		if err != nil {
+			return nil, err
+		}
+
+		syncer.eoaawHandle = eoaawh
+	}
+
 	// [SCHEDULED FOR REMOVAL]
 	// Transaction pool worker handle construction.
 	if syncer.syncTxPool {
@@ -435,6 +490,12 @@ func (s *Syncer) Start() error {
 		}
 	}
 
+	if s.eoaawHandle != nil {
+		if err := s.eoaawHandle.eoaaw.Start(); err != nil {
+			return fmt.Errorf("cannot start EOA activity worker: %w", err)
+		}
+	}
+
 	if s.syncTxPool {
 		if err := s.txpwHandle.txpw.Start(); err != nil {
 			return fmt.Errorf("cannot start block worker: %w", err)
@@ -443,47 +504,29 @@ func (s *Syncer) Start() error {
 
 	s.log("started")
 
-	if s.entityStatsCh != nil && s.entityDB != nil {
-		s.entityWg.Add(1)
-
-		go func() {
-			defer s.entityWg.Done()
-
-			ec, err := ethclient.Dial(s.rpcURL)
-			if err != nil {
-				s.log("entity stats ethclient: %v", err.Error())
-				for range s.entityStatsCh {
-				}
-				return
-			}
-			defer ec.Close()
-
-			for job := range s.entityStatsCh {
-				if err := entitystatsworker.ProcessBlock(context.Background(), s.entityDB, ec, job); err != nil {
-					s.log("entity stats: %v", err.Error())
-				}
-			}
-		}()
-	}
-
 	wg := sync.WaitGroup{}
 
+	wg.Add(2)
+
 	// We don't care about txpool worker since it is scheduled for removal.
+
 	if s.erc20Backend != nil {
-		wg.Add(3)
-	} else {
-		wg.Add(2)
+		wg.Add(1)
+	}
+
+	if s.eoaActivityBackend != nil {
+		wg.Add(1)
 	}
 
 	// Block worker controller goroutine - responsible for managing the block worker lifecycle.
 	// It has two tasks/responsibilities:
 	//
 	// 1. Listens for fatal errors from the block worker. Since a value sent to errCh indicates
-	//    the block worker has already shut down, it logs the error and signals the transaction
-	//    and tx pool worker controllers to shut down as well.
+	//    the block worker has already shut down, it logs the error and signals the other worker
+	//    worker controllers to shut down as well.
 	//
-	// 2. Listens for a shutdown signal from the other two worker controllers. Upon receiving
-	//    it, it signals the block worker to stop by closing ctrlCh, and waits for it to shut
+	// 2. Listens for a shutdown signal from the other worker controllers. Upon receiving it,
+	//    it signals the block worker to stop by closing ctrlCh, and waits for it to shut down
 	//    down gracefully via doneCh.
 	go func() {
 		defer wg.Done()
@@ -496,7 +539,11 @@ func (s *Syncer) Start() error {
 		case <-s.shutDownCh:
 			close(s.bwHandle.ctrlCh)
 
-			<-s.bwHandle.doneCh
+			select {
+			case err := <-s.bwHandle.errCh:
+				s.log("block worker encountered a fatal error: %s", err.Error())
+			case <-s.bwHandle.doneCh:
+			}
 		}
 	}()
 
@@ -510,23 +557,19 @@ func (s *Syncer) Start() error {
 	//
 	// 2. Waits for all active workers to complete their jobs. Once all workers have finished,
 	//    writes the block to the storage. If any worker encounters a fatal error, it initiates
-	//    a graceful shutdown of all other transaction workers and signals the block and tx pool
-	// 	  worker controllers to shut down as well.
+	//    a graceful shutdown of all other transaction workers and signals the other worker
+	// 	  controllers to shut down as well.
 	//
-	// 3. Listens for a shutdown signal from the other two worker controllers. Upon receiving it,
+	// 3. Listens for a shutdown signal from the other worker controllers. Upon receiving it,
 	//    initiates a graceful shutdown of all transaction workers.
 	go func() {
 		defer wg.Done()
 
-		if s.entityStatsCh != nil {
-			defer close(s.entityStatsCh)
-		}
-
 		// shutDownFn signals the transaction workers (by closing their job channels) and the
-		// other two worker controllers (by closing their shutDown channels) to shut down, and
-		// waits for all active workers to shut down gracefully via doneCh. numOfAlreadyDown
-		// indicates how many workers have already shut down (due to error) and should not be
-		// waited on.
+		// other worker controllers (by closing shutDown channel) to shut down, and waits for
+		// all active transaction workers to shut down gracefully via doneCh. numOfAlreadyDown
+		// indicates how many transaction workers have already shut down (due to error) and
+		// should not be waited on.
 		shutDownFn := func(numOfAlreadyDown int) {
 			s.shutDownHandles()
 
@@ -626,20 +669,6 @@ func (s *Syncer) Start() error {
 				shutDownFn(errOcured)
 
 				break
-			}
-
-			if s.entityStatsCh != nil {
-				job := entitystatsworker.BlockJob{
-					BlockNumber: uint64(block.Number),
-					BlockTS:     uint64(block.Timestamp),
-					Txs:         block.Transactions,
-				}
-
-				select {
-				case s.entityStatsCh <- job:
-				default:
-					s.log("entity stats queue full, dropped block %d", currentBlock)
-				}
 			}
 
 			s.log("block %v processed", currentBlock)
@@ -806,7 +835,7 @@ func (s *Syncer) Start() error {
 						make(chan struct {
 							Err error
 							Id  string
-						}))
+						}, 1))
 					if err != nil {
 						s.log("failed to create ERC-20 worker for token %s: %s",
 							*token.Symbol,
@@ -880,6 +909,37 @@ func (s *Syncer) Start() error {
 		}()
 	}
 
+	// EOA activity worker controller goroutine - responsible for managing the EOA activity
+	// worker lifecycle. It has two tasks/responsibilities:
+	//
+	// 1. Listens for fatal errors from the EOA activity worker. Since a value sent to errCh
+	//    indicates the EOA activity worker has already shut down, it logs the error and signals
+	//    the other worker controllers to shut down as well.
+	//
+	// 2. Listens for a shutdown signal from the other worker controllers. Upon receiving it,
+	//    it signals the eoa activity worker to stop by closing ctrlCh, and waits for it to
+	//    shut down gracefully via doneCh.
+	if s.eoaActivityBackend != nil {
+		go func() {
+			defer wg.Done()
+
+			select {
+			case err := <-s.eoaawHandle.errCh:
+				s.log("EOA activity worker encountered a fatal error: %s", err.Err.Error())
+
+				s.shutDownHandles()
+			case <-s.shutDownCh:
+				close(s.eoaawHandle.ctrlCh)
+
+				select {
+				case err := <-s.eoaawHandle.errCh:
+					s.log("EOA activity worker encountered a fatal error: %s", err.Err.Error())
+				case <-s.eoaawHandle.doneCh:
+				}
+			}
+		}()
+	}
+
 	// [SCHEDULED FOR REMOVAL]
 	// Tx pool worker controller goroutine - responsible for managing the tx pool worker lifecycle.
 	// It has two tasks/responsibilities:
@@ -903,14 +963,20 @@ func (s *Syncer) Start() error {
 			case <-s.shutDownCh:
 				close(s.txpwHandle.ctrlCh)
 
-				<-s.txpwHandle.doneCh
+				fmt.Println("TU SAM")
+
+				select {
+				case err := <-s.txpwHandle.errCh:
+					s.log("tx pool worker encountered a fatal error: %s", err.Error())
+
+					s.shutDownHandles()
+				case <-s.txpwHandle.doneCh:
+				}
 			}
 		}()
 	}
 
 	wg.Wait()
-
-	s.entityWg.Wait()
 
 	return nil
 }
@@ -1294,6 +1360,128 @@ func (s *Syncer) createErc20WorkerHandle(
 	return &erc20WorkerHandle{
 		erc20w,
 		token,
+		ctrlCh,
+		doneCh,
+		errCh,
+	}, nil
+}
+
+type eoaActivityWorkerHandle struct {
+	eoaaw  *abstractworker.AbstractWorker
+	ctrlCh chan struct{}
+	doneCh chan string
+	errCh  chan struct {
+		Err error
+		Id  string
+	}
+}
+
+func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, error) {
+	ctrlCh := make(chan struct{}, 1)
+	doneCh := make(chan string, 1)
+	errCh := make(chan struct {
+		Err error
+		Id  string
+	}, 1)
+
+	client, err := rpc.Dial(s.rpcURL)
+	if err != nil {
+		return nil, fmt.Errorf("cannot establish RPC connection for eoa activity worker: %w", err)
+	}
+
+	currentBlock := s.eoaActivityStartBlock
+
+	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
+		log("processing block %v", currentBlock)
+
+		participants, err := s.eoaActivityBackend.GetBlockParticipants(currentBlock)
+		if err != nil {
+			return false, false, err
+		}
+
+		if participants == nil {
+			return false, true, nil
+		}
+
+		eoaAddresses := make([]string, 0, len(participants))
+		toAddresses := make([]string, 0, len(participants))
+
+		for _, participant := range participants {
+			eoaAddresses = append(eoaAddresses, participant.From)
+
+			if participant.To != nil {
+				toAddresses = append(toAddresses, *participant.To)
+			}
+		}
+
+		knownEOAs, err := s.eoaActivityBackend.FilterKnownEOAs(toAddresses)
+		if err != nil {
+			return false, false, err
+		}
+
+		knownSet := make(map[string]struct{}, len(knownEOAs))
+
+		for _, addr := range knownEOAs {
+			knownSet[addr] = struct{}{}
+		}
+
+		for _, addr := range toAddresses {
+			if _, ok := knownSet[addr]; ok {
+				eoaAddresses = append(eoaAddresses, addr)
+
+				continue
+			}
+
+			var code hexutil.Bytes
+
+			if err := client.CallContext(context.TODO(),
+				&code,
+				"eth_getCode",
+				addr,
+				"latest"); err != nil {
+				return false, false, fmt.Errorf("failed to get code: %w", err)
+			}
+
+			if len(code) == 0 {
+				eoaAddresses = append(eoaAddresses, addr)
+			}
+		}
+
+		if err := s.eoaActivityBackend.RecordEOAActivity(currentBlock, eoaAddresses); err != nil {
+			return false, false, err
+		}
+
+		log("block %d processed, recorded %d EOA addresses", currentBlock, len(eoaAddresses))
+
+		currentBlock++
+
+		return false, false, nil
+	}
+
+	opts := []abstractworker.AbstractWorkerOption{
+		abstractworker.WithID("0"),
+		abstractworker.WithWorkerType("eoa activity"),
+		abstractworker.WithProcessInterval(s.eoaActivityProcessInterval),
+	}
+
+	if s.logger != nil {
+		opts = append(opts, abstractworker.WithLogger(s.logger))
+	}
+
+	eoaaw, err := abstractworker.NewAbstractWorker(
+		processFn,
+		ctrlCh,
+		doneCh,
+		errCh,
+		opts...,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("cannot create eoa activity worker: %w", err)
+	}
+
+	return &eoaActivityWorkerHandle{
+		eoaaw,
 		ctrlCh,
 		doneCh,
 		errCh,

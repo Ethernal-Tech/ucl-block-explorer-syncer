@@ -71,6 +71,11 @@ type ERC20Token struct {
 	UpdatedAt *time.Time
 }
 
+type BlockParticipant struct {
+	From string
+	To   *string
+}
+
 func (b *Block) UnmarshalJSON(data []byte) error {
 	type block Block
 
