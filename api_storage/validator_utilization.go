@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -69,31 +70,59 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 		truncExpr = "date_trunc('day', to_timestamp(b.timestamp) AT TIME ZONE 'UTC')"
 	}
 
+	from, toEx, err := parseStatsTimeRange(req.FromDay, req.ToDay, req.FromUtc, req.ToUtc)
+	if err != nil {
+		return &ValidatorUtilizationResponse{Code: "400", Message: err.Error()}, nil
+	}
+
+	// Default time range if not provided
+	if from.IsZero() {
+		if toEx.IsZero() {
+			toEx = time.Now().UTC()
+		}
+		from = toEx.AddDate(0, 0, -30)
+	}
+	if toEx.IsZero() {
+		toEx = time.Now().UTC()
+	}
+
+	// Limit query span per granularity
+	var maxDays int
+	switch g {
+	case "hour":
+		maxDays = 60
+	case "month":
+		maxDays = 365
+	default:
+		maxDays = 90
+	}
+
+	days := int(toEx.Sub(from).Hours() / 24)
+	if days > maxDays {
+		return &ValidatorUtilizationResponse{
+			Code:    "400",
+			Message: fmt.Sprintf("Date range too large for %s granularity (max %d days)", g, maxDays),
+		}, nil
+	}
+
+	// Build filters — time range is always present now
 	args := []interface{}{}
 	argIdx := 1
 	filters := ""
 
 	if req.Validator != "" {
 		filters += fmt.Sprintf(" AND lower(b.miner) = $%d", argIdx)
-		args = append(args, req.Validator)
+		args = append(args, strings.ToLower(req.Validator))
 		argIdx++
 	}
 
-	from, toEx, err := parseStatsTimeRange(req.FromDay, req.ToDay, req.FromUtc, req.ToUtc)
-	if err != nil {
-		return &ValidatorUtilizationResponse{Code: "400", Message: err.Error()}, nil
-	}
+	filters += fmt.Sprintf(" AND b.timestamp >= extract(epoch from $%d::timestamptz)::bigint", argIdx)
+	args = append(args, from.UTC().Format(time.RFC3339))
+	argIdx++
 
-	if !from.IsZero() {
-		filters += fmt.Sprintf(" AND to_timestamp(b.timestamp) >= $%d::timestamptz", argIdx)
-		args = append(args, from.UTC().Format(time.RFC3339))
-		argIdx++
-	}
-	if !toEx.IsZero() {
-		filters += fmt.Sprintf(" AND to_timestamp(b.timestamp) < $%d::timestamptz", argIdx)
-		args = append(args, toEx.UTC().Format(time.RFC3339))
-		argIdx++
-	}
+	filters += fmt.Sprintf(" AND b.timestamp < extract(epoch from $%d::timestamptz)::bigint", argIdx)
+	args = append(args, toEx.UTC().Format(time.RFC3339))
+	argIdx++
 
 	query := fmt.Sprintf(`
 		SELECT
