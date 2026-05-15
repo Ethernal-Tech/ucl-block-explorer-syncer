@@ -25,14 +25,17 @@ func parseCirculationTimeRange(conn *sql.DB, req Erc20CirculationCumulativeReque
 	if strings.TrimSpace(req.FromUtc) != "" || strings.TrimSpace(req.ToUtc) != "" {
 		return parseStatsTimeRange(req.FromDay, req.ToDay, req.FromUtc, req.ToUtc)
 	}
+
 	toDay := strings.TrimSpace(req.ToDay)
 	if toDay == "" {
 		toDay = time.Now().UTC().Format("2006-01-02")
 	}
+
 	td, err := time.Parse("2006-01-02", toDay)
 	if err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("toDay: %w", err)
 	}
+
 	toEx = time.Date(td.Year(), td.Month(), td.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
 
 	fromDay := strings.TrimSpace(req.FromDay)
@@ -45,12 +48,6 @@ func parseCirculationTimeRange(conn *sql.DB, req Erc20CirculationCumulativeReque
 		return from, toEx, nil
 	}
 
-	var fd sql.NullTime
-	_ = conn.QueryRow(`SELECT MIN(hour_utc) FROM chain.erc20_circulation_cumulative`).Scan(&fd)
-	if fd.Valid {
-		from = utcHourStart(fd.Time)
-		return from, toEx, nil
-	}
 	var ms sql.NullTime
 	_ = conn.QueryRow(`
 		SELECT MIN(s.hour_utc) FROM chain.erc20_hourly_stats s
@@ -62,6 +59,7 @@ func parseCirculationTimeRange(conn *sql.DB, req Erc20CirculationCumulativeReque
 		return from, toEx, nil
 	}
 	from = toEx.AddDate(0, 0, -1)
+
 	return from, toEx, nil
 }
 
@@ -185,14 +183,19 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 
 func buildCirculationHourlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20CirculationCumulativeRow, error) {
 	rows, err := conn.Query(`
-		SELECT s.hour_utc,
-		       SUM(s.cumulative_circulation)::text AS total
-		FROM chain.erc20_hourly_stats s
-		INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
-		WHERE w.enabled = true AND w.decimals IS NOT NULL
-		  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
-		GROUP BY s.hour_utc
-		ORDER BY s.hour_utc ASC
+		SELECT h.hour_utc,
+		       COALESCE(d.total, LAG(d.total) OVER (ORDER BY h.hour_utc), '0') AS total
+		FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour') AS h(hour_utc)
+		LEFT JOIN (
+			SELECT s.hour_utc,
+			       SUM(s.cumulative_circulation)::text AS total
+			FROM chain.erc20_hourly_stats s
+			INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+			WHERE w.enabled = true AND w.decimals IS NOT NULL
+			  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
+			GROUP BY s.hour_utc
+		) d ON d.hour_utc = h.hour_utc
+		ORDER BY h.hour_utc ASC
 	`, from.UTC().Format(time.RFC3339), toEx.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
@@ -215,24 +218,22 @@ func buildCirculationHourlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Ci
 	}
 	return out, rows.Err()
 }
-
 func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20CirculationCumulativeRow, error) {
 	rows, err := conn.Query(`
-		SELECT bucket, total FROM (
+		SELECT d.day_utc,
+		       COALESCE(data.total, LAG(data.total) OVER (ORDER BY d.day_utc), '0') AS total
+		FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 day', interval '1 day') AS d(day_utc)
+		LEFT JOIN (
 			SELECT DISTINCT ON (date_trunc('day', hour_utc, 'UTC'))
-				date_trunc('day', hour_utc, 'UTC')::timestamptz AS bucket,
-				hourly_total AS total
-			FROM (
-				SELECT s.hour_utc,
-				       SUM(s.cumulative_circulation)::text AS hourly_total
-				FROM chain.erc20_hourly_stats s
-				INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
-				WHERE w.enabled = true AND w.decimals IS NOT NULL
-				  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
-				GROUP BY s.hour_utc
-			) hourly
+				date_trunc('day', hour_utc, 'UTC')::timestamptz AS day_utc,
+				SUM(s.cumulative_circulation) OVER (PARTITION BY s.hour_utc)::text AS total
+			FROM chain.erc20_hourly_stats s
+			INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+			WHERE w.enabled = true AND w.decimals IS NOT NULL
+			  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
 			ORDER BY date_trunc('day', hour_utc, 'UTC'), hour_utc DESC
-		) sub ORDER BY bucket ASC
+		) data ON data.day_utc = d.day_utc
+		ORDER BY d.day_utc ASC
 	`, from.UTC().Format(time.RFC3339), toEx.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
@@ -258,9 +259,16 @@ func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Cir
 
 func buildCirculationMonthlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20CirculationCumulativeRow, error) {
 	rows, err := conn.Query(`
-		SELECT bucket, total FROM (
+		SELECT m.month_utc,
+		       COALESCE(data.total, LAG(data.total) OVER (ORDER BY m.month_utc), '0') AS total
+		FROM generate_series(
+			date_trunc('month', $1::timestamptz),
+			date_trunc('month', $2::timestamptz - interval '1 day'),
+			interval '1 month'
+		) AS m(month_utc)
+		LEFT JOIN (
 			SELECT DISTINCT ON (date_trunc('month', hour_utc, 'UTC'))
-				date_trunc('month', hour_utc, 'UTC')::timestamptz AS bucket,
+				date_trunc('month', hour_utc, 'UTC')::timestamptz AS month_utc,
 				hourly_total AS total
 			FROM (
 				SELECT s.hour_utc,
@@ -272,7 +280,8 @@ func buildCirculationMonthlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20C
 				GROUP BY s.hour_utc
 			) hourly
 			ORDER BY date_trunc('month', hour_utc, 'UTC'), hour_utc DESC
-		) sub ORDER BY bucket ASC
+		) data ON data.month_utc = m.month_utc
+		ORDER BY m.month_utc ASC
 	`, from.UTC().Format(time.RFC3339), toEx.UTC().Format(time.RFC3339))
 	if err != nil {
 		return nil, err
