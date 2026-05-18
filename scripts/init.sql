@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS chain.blocks (
 CREATE INDEX IF NOT EXISTS idx_blocks_number_desc ON chain.blocks(number DESC);
 CREATE INDEX IF NOT EXISTS idx_blocks_timestamp ON chain.blocks(timestamp);
 CREATE INDEX IF NOT EXISTS idx_blocks_number ON chain.blocks(number);
+CREATE INDEX IF NOT EXISTS idx_blocks_miner_timestamp ON chain.blocks (miner, timestamp);
 
 CREATE TABLE IF NOT EXISTS chain.transactions (
     hash            VARCHAR(66) PRIMARY KEY,

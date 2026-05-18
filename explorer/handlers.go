@@ -229,6 +229,22 @@ func (e *Explorer) GetErc20Watchlist() (interface{}, error) {
 	return response, nil
 }
 
+// GetValidatorUtilization returns per-validator gas utilization stats.
+func (e *Explorer) GetValidatorUtilization(req *api_storage.ValidatorUtilizationRequest) (interface{}, error) {
+	if req == nil {
+		req = &api_storage.ValidatorUtilizationRequest{
+			Page:     1,
+			PageSize: 50,
+		}
+	}
+	response, err := api_storage.GetValidatorCapacityStats(*req)
+	if err != nil {
+		e.logf("failed to get validator capacity: %v", err)
+		return nil, err
+	}
+	return response, nil
+}
+
 // GetValidatorMetadata returns all validator metadata entries.
 func (e *Explorer) GetValidatorMetadata() (interface{}, error) {
 	response, err := api_storage.GetValidatorMetadataList()
