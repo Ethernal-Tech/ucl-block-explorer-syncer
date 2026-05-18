@@ -228,3 +228,13 @@ func (e *Explorer) GetErc20Watchlist() (interface{}, error) {
 
 	return response, nil
 }
+
+// GetValidatorMetadata returns all validator metadata entries.
+func (e *Explorer) GetValidatorMetadata() (interface{}, error) {
+	response, err := api_storage.GetValidatorMetadataList()
+	if err != nil {
+		e.logf("failed to get validator metadata: %v", err)
+		return nil, err
+	}
+	return response, nil
+}
