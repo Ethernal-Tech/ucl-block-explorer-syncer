@@ -29,6 +29,7 @@ var (
 	erc20ProcessInterval        uint64
 	eoaActivityStats            bool
 	eoaActivityProcessInterval  uint64
+	circulationPollInterval     uint64
 )
 
 var syncerCommand = &cobra.Command{
@@ -96,6 +97,9 @@ func setOptionalFlags() {
 
 	syncerCommand.Flags().Uint64Var(&eoaActivityProcessInterval, "eoa-activity-process-interval", 2000,
 		"how often the syncer retries processing a block for EOA activity statistics when it is not yet available, in milliseconds")
+
+	syncerCommand.Flags().Uint64Var(&circulationPollInterval, "circulation-poll-interval", 0,
+		"interval in milliseconds between circulation polls")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
@@ -188,7 +192,9 @@ func execute(cmd *cobra.Command, args []string) error {
 	}
 
 	if syn, err := syncer.NewSyncer(rpcUrl, sh, opts...); err == nil {
-		syn.Start()
+		if err := syn.Start(); err != nil {
+			return err
+		}
 	} else {
 		return err
 	}

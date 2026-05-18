@@ -98,20 +98,12 @@ CREATE TABLE IF NOT EXISTS chain.erc20_hourly_stats (
     burn_count BIGINT NOT NULL DEFAULT 0,
     burn_volume_raw NUMERIC(78, 0) NOT NULL DEFAULT 0,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    cumulative_circulation NUMERIC NOT NULL DEFAULT 0,
     PRIMARY KEY (token_address, hour_utc)
 );
 
 CREATE INDEX IF NOT EXISTS idx_erc20_hourly_stats_hour ON chain.erc20_hourly_stats(hour_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_erc20_hourly_stats_token ON chain.erc20_hourly_stats(token_address);
-
--- Cached end-of-hour cumulative circulation (human units, all enabled watchlist tokens). TRUNCATE after historical reindex if needed.
-CREATE TABLE IF NOT EXISTS chain.erc20_circulation_cumulative (
-    hour_utc TIMESTAMPTZ PRIMARY KEY,
-    cumulative_total NUMERIC NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_erc20_circulation_cumulative_hour ON chain.erc20_circulation_cumulative(hour_utc DESC);
 
 -- Adoption analytics (syncer --entity-stats): unique EOA addresses per UTC hour (from/to; contracts excluded via eth_getCode).
 CREATE TABLE IF NOT EXISTS chain.entity_hour_participation (
