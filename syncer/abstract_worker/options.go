@@ -41,13 +41,11 @@ func WithWorkerType(workerType string) AbstractWorkerOption {
 // WithProcessInterval sets how long the worker waits before the next invocation of callback
 // [AbstractWorker.processFn] when it returns true as the second (wait) value, provided that
 // no error was returned and done is false, expressed in milliseconds. The interval must be
-// between 200 and 900000 milliseconds (15 minutes), inclusive. By default, 2000 milliseconds.
+// at least 200 milliseconds. By default, 2000 milliseconds.
 func WithProcessInterval(processInterval uint64) AbstractWorkerOption {
 	return func(w *AbstractWorker) error {
 		if processInterval < 200 {
 			return fmt.Errorf("process interval must be at least 200 milliseconds")
-		} else if processInterval > 900000 {
-			return fmt.Errorf("process interval must not exceed 900000 milliseconds (15 minutes)")
 		}
 
 		w.processInterval = processInterval

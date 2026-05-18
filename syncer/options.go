@@ -243,3 +243,32 @@ func WithEoaActivityStartBlock(block uint64) SyncerOption {
 		return nil
 	}
 }
+
+// WithEsgAggregationStats configures the syncer to track ESG aggregation statistics using the provided
+// backend. For additional information on the underlying process, see the [ESGAggregationBackend]
+// interface documentation.
+func WithEsgAggregationStats(backend ESGAggregationBackend) SyncerOption {
+	return func(s *Syncer) error {
+		if backend == nil {
+			return fmt.Errorf("esg aggregation backend must be provided")
+		}
+
+		s.esgAggregationBackend = backend
+
+		return nil
+	}
+}
+
+// WithESGAggregationPollInterval sets the delay between two ESG consequtive retrievals.
+// The interval must be at least 200 milliseconds. By default, 24 hours.
+func WithESGAggregationPollInterval(interval uint64) SyncerOption {
+	return func(s *Syncer) error {
+		if interval < 200 {
+			return fmt.Errorf("esg aggregation process interval must be at least 200ms")
+		}
+
+		s.esgAggregationPollInterval = interval
+
+		return nil
+	}
+}
