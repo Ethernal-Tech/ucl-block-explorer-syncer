@@ -22,6 +22,9 @@ var (
 	apiChainID        uint64
 	apiVersion        string
 	apiAdminAPISecret string
+
+	seedAdminUser string
+	seedAdminPass string
 )
 
 var apiCommand = &cobra.Command{
@@ -55,6 +58,11 @@ func init() {
 	apiCommand.Flags().StringVar(&apiAdminAPISecret, "admin-api-secret", "",
 		"Bearer token for POST /admin/v1/erc20/watchlist (default: ADMIN_API_SECRET env)")
 	_ = apiCommand.MarkFlagRequired("db-conn")
+
+	apiCommand.Flags().StringVar(&seedAdminUser, "seed-admin-user", "",
+		"create/update an admin user on startup (requires --seed-admin-pass)")
+	apiCommand.Flags().StringVar(&seedAdminPass, "seed-admin-pass", "",
+		"password for --seed-admin-user")
 }
 
 func runAPI(cmd *cobra.Command, args []string) error {
@@ -70,6 +78,14 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	}
 
 	api_storage.SetDB(db)
+
+	// Seed admin if flags provided
+	if seedAdminUser != "" && seedAdminPass != "" {
+		if err := api_storage.CrateAdminUser(seedAdminUser, seedAdminPass); err != nil {
+			return fmt.Errorf("seed admin: %w", err)
+		}
+		log.Printf("admin user '%s' created/updated", seedAdminUser)
+	}
 
 	ex := explorer.NewExplorer()
 	if apiLogging {

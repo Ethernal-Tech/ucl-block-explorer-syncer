@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/explorer"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/jsonrpc"
+	"github.com/alexedwards/scs/postgresstore"
+	"github.com/alexedwards/scs/v2"
 )
 
 // Config matches polygon-edge jsonrpc.Config fields used for GET / (handleGetRequest).
@@ -24,9 +27,10 @@ type Config struct {
 // Server mirrors ucl-node2 jsonrpc.JSONRPC HTTP surface: POST / (JSON-RPC), GET /
 // (chain metadata), /ws, plus GET /health for probes (not in polygon-edge but harmless).
 type Server struct {
-	handler  *jsonrpc.ExplorerHandler
-	explorer *explorer.Explorer
-	cfg      Config
+	handler        *jsonrpc.ExplorerHandler
+	explorer       *explorer.Explorer
+	cfg            Config
+	sessionManager *scs.SessionManager
 }
 
 // New creates the HTTP handler bundle. cfg supplies name/chain_id/version for GET / like polygon-edge.
@@ -35,31 +39,51 @@ func New(ex *explorer.Explorer, cfg Config) *Server {
 		cfg.Version = "0.0.1"
 	}
 
+	sm := scs.New()
+	sm.Lifetime = 24 * time.Hour
+	sm.Cookie.HttpOnly = true
+	sm.Cookie.SameSite = http.SameSiteLaxMode
+	sm.Cookie.Secure = false // set true in production with HTTPS
+	sm.Cookie.Name = "session"
+	sm.Cookie.Path = "/"
+
+	if cfg.DB != nil {
+		sm.Store = postgresstore.New(cfg.DB)
+	}
+
 	return &Server{
-		explorer: ex,
-		cfg:      cfg,
+		explorer:       ex,
+		cfg:            cfg,
+		sessionManager: sm,
 		handler: &jsonrpc.ExplorerHandler{
 			Explorer: ex,
 		},
 	}
 }
 
-// Handler returns the root http.Handler (polygon-edge: / and /ws; plus GET /health).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	if s.cfg.DB != nil {
-		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.handleAdminErc20Watchlist)
-		mux.HandleFunc("/admin/v1/validators/", s.handleAdminValidators)
-		mux.HandleFunc("/admin/v1/asset-issuers/", s.handleAdminAssetIssuers)
-		mux.HandleFunc("/admin/v1/asset-issuers", s.handleAdminAssetIssuers)
+		// Auth endpoints — no guard
+		mux.HandleFunc("POST /admin/login", s.handleAdminLogin)
+		mux.HandleFunc("POST /admin/logout", s.handleAdminLogout)
+		mux.HandleFunc("GET /admin/session", s.handleAdminSession)
+
+		// Admin CRUD — guarded
+		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.requireAdmin(s.handleAdminErc20Watchlist))
+		mux.HandleFunc("/admin/v1/validators/", s.requireAdmin(s.handleAdminValidators))
+		mux.HandleFunc("/admin/v1/asset-issuers/", s.requireAdmin(s.handleAdminAssetIssuers))
+		mux.HandleFunc("/admin/v1/asset-issuers", s.requireAdmin(s.handleAdminAssetIssuers))
+		mux.HandleFunc("/admin/v1/users/", s.requireAdmin(s.handleAdminUsers))
+		mux.HandleFunc("/admin/v1/users", s.requireAdmin(s.handleAdminUsers))
 	}
 
 	mux.Handle("/", http.HandlerFunc(s.handle))
 	mux.HandleFunc("/ws", s.handleWS)
 
-	return middlewareFactory()(mux)
+	return middlewareFactory()(s.sessionManager.LoadAndSave(mux))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -137,12 +161,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 func middlewareFactory() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-			w.Header().Set(
-				"Access-Control-Allow-Headers",
-				"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization",
-			)
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers",
+				"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
