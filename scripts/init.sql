@@ -130,4 +130,18 @@ CREATE TABLE IF NOT EXISTS chain.validator_metadata (
     institution TEXT,
     region TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS chain.asset_issuers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    website TEXT,
+    contact TEXT,
+    region TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS chain.asset_issuer_tokens (
+    issuer_id UUID NOT NULL REFERENCES chain.asset_issuers(id) ON DELETE CASCADE,
+    token_address VARCHAR(42) NOT NULL REFERENCES chain.erc20_watchlist(address) ON DELETE CASCADE,
+    PRIMARY KEY (issuer_id, token_address),
+    UNIQUE (token_address)
 );

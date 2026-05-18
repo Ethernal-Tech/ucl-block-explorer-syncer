@@ -254,3 +254,13 @@ func (e *Explorer) GetValidatorMetadata() (interface{}, error) {
 	}
 	return response, nil
 }
+
+func (e *Explorer) GetAssetIssuers() (interface{}, error) {
+	response, err := api_storage.GetAssetIssuerList()
+	if err != nil {
+		e.logf("failed to get asset issuers: %v", err)
+		return nil, err
+	}
+
+	return response, nil
+}

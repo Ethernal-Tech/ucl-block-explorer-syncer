@@ -80,6 +80,8 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 		var req *api_storage.ValidatorUtilizationRequest
 		parseOptionalObject(params, &req)
 		out, err = h.Explorer.GetValidatorUtilization(req)
+	case "explorer_getAssetIssuers":
+		out, err = h.Explorer.GetAssetIssuers()
 	default:
 		return nil, NewMethodNotFoundError(method)
 	}
