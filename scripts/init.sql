@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS chain.validator_metadata (
     institution TEXT,
     region TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS chain.asset_issuers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
