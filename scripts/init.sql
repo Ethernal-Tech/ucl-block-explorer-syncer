@@ -135,4 +135,17 @@ CREATE TABLE IF NOT EXISTS chain.asset_issuer_tokens (
     token_address VARCHAR(42) NOT NULL REFERENCES chain.erc20_watchlist(address) ON DELETE CASCADE,
     PRIMARY KEY (issuer_id, token_address),
     UNIQUE (token_address)
+CREATE TABLE IF NOT EXISTS sessions(
+    token TEXT PRIMARY KEY,
+    data BYTEA NOT NULL,
+    expiry TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sessions_expiry_idx ON sessions (expiry);
+
+CREATE TABLE IF NOT EXISTS chain.admin_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL, 
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
