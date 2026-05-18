@@ -283,8 +283,7 @@ func (w *PrologWorker) Start() error {
 	return nil
 }
 
-// shutDown gracefully shuts down the worker. If err is non-nil, it is sent to
-// [PrologWorker.errCh].
+// shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [PrologWorker.errCh].
 func (w *PrologWorker) shutDown(err error) {
 	if err != nil {
 		w.log("%s", err.Error())

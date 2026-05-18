@@ -1,10 +1,8 @@
 package syncer
 
 import (
-	"database/sql"
 	"fmt"
 
-	entitystatsworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/entity_stats_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 )
 
@@ -207,20 +205,41 @@ func WithErc20ProcessInterval(interval uint64) SyncerOption {
 	}
 }
 
-// WithEntityStats enables asynchronous adoption-entity stats after each committed block
-// (per-day unique participants + first-seen EOA via eth_getCode). db must stay open for the
-// syncer lifetime. buffer is the bounded queue depth; if zero, 64 is used.
-func WithEntityStats(db *sql.DB, buffer uint) SyncerOption {
+// WithEoaActivityStats configures the syncer to track EOA activity statistics using the provided
+// backend. For additional information on the underlying process, see the [EoaActivityBackend]
+// interface documentation.
+func WithEoaActivityStats(backend EoaActivityBackend) SyncerOption {
 	return func(s *Syncer) error {
-		if db == nil {
-			return fmt.Errorf("entity stats database handle cannot be nil")
-		}
-		if buffer == 0 {
-			buffer = 64
+		if backend == nil {
+			return fmt.Errorf("eoa activity backend must be provided")
 		}
 
-		s.entityDB = db
-		s.entityStatsCh = make(chan entitystatsworker.BlockJob, buffer)
+		s.eoaActivityBackend = backend
+
+		return nil
+	}
+}
+
+// WithEoaActivityProcessInterval sets the delay between retries when the requested block is
+// not yet available for EOA activity processing, expressed in milliseconds. The interval must
+// be between 200 and 900000 milliseconds, inclusive. By default, 2000 milliseconds.
+func WithEoaActivityProcessInterval(interval uint64) SyncerOption {
+	return func(s *Syncer) error {
+		if interval < 200 || interval > 900000 {
+			return fmt.Errorf("eoa activity process interval must be between 200ms and 15 minutes")
+		}
+
+		s.eoaActivityProcessInterval = interval
+
+		return nil
+	}
+}
+
+// WithEoaActivityStartBlock sets the block number from which the syncer begins processing EOA
+// activities. By default, 0.
+func WithEoaActivityStartBlock(block uint64) SyncerOption {
+	return func(s *Syncer) error {
+		s.eoaActivityStartBlock = block
 
 		return nil
 	}

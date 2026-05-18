@@ -53,6 +53,13 @@ ERC-20 WORKER(S)
   The interval at which a worker retries processing a block that is not yet available is
   controlled via --erc20-process-interval.
 
+EOA ACTIVITY WORKER
+  EOA activity tracking can be enabled via --eoa-activity-stats. When active, the worker
+  sequentially processes blocks and tracks the UTC hours in which each EOA address was active.
+
+  The interval at which the worker retries processing a block that is not yet available is
+  controlled via --eoa-activity-process-interval.
+
 TX POOL WORKER [scheduled for removal]
   An optional third worker can be enabled via --sync-tx-pool. When active, it periodically
   fetches pending and queued transactions from the node's transaction pool and indexes them
