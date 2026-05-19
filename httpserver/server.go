@@ -19,6 +19,7 @@ type Config struct {
 	DB        *sql.DB
 	// AdminAPISecret: if empty, POST /admin/v1/erc20/watchlist returns 404 (set ADMIN_API_SECRET or --admin-api-secret).
 	AdminAPISecret string
+	NodeRPC        string
 }
 
 // Server mirrors ucl-node2 jsonrpc.JSONRPC HTTP surface: POST / (JSON-RPC), GET /
