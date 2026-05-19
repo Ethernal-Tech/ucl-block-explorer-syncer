@@ -94,7 +94,15 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	normalized := strings.ToLower(common.HexToAddress(addr).Hex())
+	// EIP-55 checksum validation
+	checksummed := common.HexToAddress(addr).Hex()
+	if addr != strings.ToLower(addr) && addr != checksummed {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid EIP-55 checksum"})
+		return
+	}
+
+	normalized := strings.ToLower(checksummed)
 
 	// Check if already in watchlist — skip contract verification for updates
 	var alreadyExists bool
