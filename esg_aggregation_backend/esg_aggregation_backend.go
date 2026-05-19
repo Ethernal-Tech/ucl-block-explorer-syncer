@@ -209,7 +209,7 @@ func getEmissionsFromAWS(
 			NextToken:   nextToken,
 			Granularity: types.TimeGranularityMonthly,
 			GroupBy: []types.Dimension{
-				types.DimensionRegion,  // Groups breakdown by specific AWS services
+				types.DimensionRegion,  // Groups breakdown by specific AWS regions
 				types.DimensionService, // Groups breakdown by specific AWS services
 				types.DimensionUsageAccountId,
 			},

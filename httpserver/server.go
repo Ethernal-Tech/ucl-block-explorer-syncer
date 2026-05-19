@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("/admin/v1/validators/", s.handleAdminValidators)
 		mux.HandleFunc("/admin/v1/asset-issuers/", s.handleAdminAssetIssuers)
 		mux.HandleFunc("/admin/v1/asset-issuers", s.handleAdminAssetIssuers)
+		mux.HandleFunc("/admin/v1/esg", s.handleAdminEsg)
 	}
 
 	mux.Handle("/", http.HandlerFunc(s.handle))
