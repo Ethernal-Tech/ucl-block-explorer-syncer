@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"io"
@@ -21,43 +20,11 @@ type erc20WatchlistRegisterRequest struct {
 	Enabled  *bool  `json:"enabled,omitempty"`
 }
 
-func constantTimeEqualString(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
-func parseBearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-
-	const prefix = "Bearer "
-	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
-		return ""
-	}
-
-	return strings.TrimSpace(h[len(prefix):])
-}
-
 func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, methodNotAllowed)
-
-		return
-	}
-
-	if s.cfg.AdminAPISecret == "" {
-		writeError(w, http.StatusNotFound, adminAPIDisabled)
-
-		return
-	}
-
-	token := parseBearerToken(r)
-	if token == "" || !constantTimeEqualString(token, s.cfg.AdminAPISecret) {
-		writeError(w, http.StatusUnauthorized, unauthorized)
 
 		return
 	}

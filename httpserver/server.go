@@ -71,11 +71,11 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /admin/logout", s.handleAdminLogout)
 		mux.HandleFunc("GET /admin/session", s.handleAdminSession)
 
-		// Admin CRUD — guarded
 		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.requireAdmin(s.handleAdminErc20Watchlist))
 		mux.HandleFunc("/admin/v1/validators/", s.requireAdmin(s.handleAdminValidators))
 		mux.HandleFunc("/admin/v1/asset-issuers/", s.requireAdmin(s.handleAdminAssetIssuers))
 		mux.HandleFunc("/admin/v1/asset-issuers", s.requireAdmin(s.handleAdminAssetIssuers))
+		// Admin CRUD — guarded
 		mux.HandleFunc("/admin/v1/users/", s.requireAdmin(s.handleAdminUsers))
 		mux.HandleFunc("/admin/v1/users", s.requireAdmin(s.handleAdminUsers))
 	}

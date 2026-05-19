@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -114,4 +115,20 @@ func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 	}
+}
+
+func constantTimeEqualString(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func parseBearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
 }
