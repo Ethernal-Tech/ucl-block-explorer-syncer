@@ -155,6 +155,11 @@ func (b *ESGAggregationBackend) saveToDb(
 		}
 	}
 
+	// Commit the transaction.
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
 	return nil
 }
 
