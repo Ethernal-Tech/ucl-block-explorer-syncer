@@ -140,9 +140,9 @@ type Erc20Backend interface {
 		volumes map[string]*big.Int) error
 }
 
-// ESGAggregationBackend defines the interface that must be implemented by any backend
-// used for ESG calculation and aggregation.
-// It is required when the syncer is configured with the [WithESGAggregationStats].
+// ESGAggregationBackend defines the interface that must be implemented by any backend used
+// for ESG calculation and aggregation. It is required when the syncer is configured with the
+// [WithESGAggregationStats].
 type ESGAggregationBackend interface {
 	// Process executes the ESG aggregation logic.
 	Process(func(string, ...any)) (done bool, wait bool, err error)
@@ -285,8 +285,9 @@ type Syncer struct {
 	// esgAggregationBackend is the backend required for processing ESG aggregation. If nil, processing
 	// is disabled. For details, see the [ESGAggregationBackend] interface documentation.
 	esgAggregationBackend ESGAggregationBackend
-	// esgAggregationPollInterval specifies how often the syncer attempts to execute ESG aggregation logic.
-	// By default, once per day.
+
+	// esgAggregationPollInterval specifies how often the syncer attempts to execute ESG aggregation
+	// logic. By default, once per day.
 	esgAggregationPollInterval uint64
 
 	// Internal fields used by the syncer:

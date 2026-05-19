@@ -259,8 +259,8 @@ func WithEsgAggregationStats(backend ESGAggregationBackend) SyncerOption {
 	}
 }
 
-// WithESGAggregationPollInterval sets the delay between two ESG consequtive retrievals.
-// The interval must be at least 200 milliseconds. By default, 24 hours.
+// WithESGAggregationPollInterval sets the delay between two ESG consequtive retrievals. The
+// interval must be at least 200 milliseconds. By default, 24 hours.
 func WithESGAggregationPollInterval(interval uint64) SyncerOption {
 	return func(s *Syncer) error {
 		if interval < 200 {

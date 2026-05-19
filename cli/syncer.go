@@ -111,6 +111,7 @@ func setOptionalFlags() {
 
 	syncerCommand.Flags().Uint64Var(&esgAggregationPollInterval, "esg-aggregation-poll-interval", 86400000,
 		"how often the syncer polls for new ESG aggregation data, in milliseconds")
+
 	syncerCommand.Flags().StringVar(&configPath, "config", "", "path to JSON config file")
 }
 
