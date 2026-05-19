@@ -39,7 +39,10 @@ func (b *ESGAggregationBackend) Process(log func(string, ...any)) (done bool, wa
 		return false, false, fmt.Errorf("failed to get last processed time: %w", err)
 	}
 
-	var startTime time.Time
+	var (
+		ctx       = context.TODO()
+		startTime time.Time
+	)
 
 	// Compute current month start and its end (start of next month)
 	now := time.Now().UTC()
@@ -54,12 +57,12 @@ func (b *ESGAggregationBackend) Process(log func(string, ...any)) (done bool, wa
 		startTime = currMonthStart.AddDate(0, -6, 0)
 	}
 
-	emissions, err := getEmissionsFromAWS(context.TODO(), startTime, endTime)
+	emissions, err := getEmissionsFromAWS(ctx, startTime, endTime)
 	if err != nil {
 		return false, false, fmt.Errorf("failed to execute ESG aggregation: %w", err)
 	}
 
-	err = b.saveToDb(emissions)
+	err = b.saveToDb(ctx, emissions)
 	if err != nil {
 		return false, false, fmt.Errorf("failed to save emissions to DB: %w", err)
 	}
@@ -88,7 +91,9 @@ func (b *ESGAggregationBackend) getLast() (uint64, error) {
 	return uint64(t.Time.Unix()), nil
 }
 
-func (b *ESGAggregationBackend) saveToDb(emissions []types.EstimatedCarbonEmissions) error {
+func (b *ESGAggregationBackend) saveToDb(
+	ctx context.Context, emissions []types.EstimatedCarbonEmissions,
+) error {
 	isAllowed := func(allowed []string, value string) bool {
 		return len(allowed) == 0 || slices.Contains(allowed, value)
 	}
@@ -128,10 +133,17 @@ func (b *ESGAggregationBackend) saveToDb(emissions []types.EstimatedCarbonEmissi
 	}
 
 	// save to db
+	tx, err := b.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	defer tx.Rollback()
+
 	for tm, result := range values {
 		t := time.Unix(tm, 0).UTC()
 
-		_, err := b.db.Exec(`
+		_, err := tx.Exec(`
 			INSERT INTO chain.esg_state (time_at, total_lbm_carbon_emissions, total_mbm_carbon_emissions)
 			VALUES ($1, $2, $3)
 			ON CONFLICT (time_at) DO UPDATE SET
