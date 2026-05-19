@@ -33,7 +33,9 @@ func NewESGAggregationBackend(db *sql.DB, config *utils.ESGAggregationBackendCon
 	}
 }
 
-func (b *ESGAggregationBackend) Process(log func(string, ...any)) (done bool, wait bool, err error) {
+func (b *ESGAggregationBackend) Process(logger func(string, ...any)) (done bool, wait bool, err error) {
+	logger("Executing ESG aggregation...")
+
 	lastUnix, err := b.getLast()
 	if err != nil {
 		return false, false, fmt.Errorf("failed to get last processed time: %w", err)
@@ -57,10 +59,12 @@ func (b *ESGAggregationBackend) Process(log func(string, ...any)) (done bool, wa
 		startTime = currMonthStart.AddDate(0, -6, 0)
 	}
 
-	emissions, err := getEmissionsFromAWS(ctx, startTime, endTime)
+	emissions, err := getEmissionsFromAWS(ctx, startTime, endTime, logger)
 	if err != nil {
 		return false, false, fmt.Errorf("failed to execute ESG aggregation: %w", err)
 	}
+
+	logger("Saving ESG stats...")
 
 	err = b.saveToDb(ctx, emissions)
 	if err != nil {
@@ -76,11 +80,11 @@ func (b *ESGAggregationBackend) getLast() (uint64, error) {
 	err := b.db.QueryRow(`
 		SELECT MAX(time_at) FROM chain.esg_state
 	`).Scan(&t)
-
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil
 		}
+
 		return 0, fmt.Errorf("failed to query last esg_state time_at: %w", err)
 	}
 
@@ -166,6 +170,7 @@ func (b *ESGAggregationBackend) saveToDb(
 func getEmissionsFromAWS(
 	ctx context.Context,
 	startTime, endTime time.Time,
+	logger func(string, ...any),
 ) (result []types.EstimatedCarbonEmissions, err error) {
 	var opts []func(*config.LoadOptions) error
 
@@ -190,7 +195,8 @@ func getEmissionsFromAWS(
 	client := sustainability.NewFromConfig(cfg)
 
 	// 3. Call GetEstimatedCarbonEmissions (Granular breakdown)
-	fmt.Println("\nRetrieving Granular Estimated Carbon Emissions...")
+	logger("Retrieving Granular Estimated Carbon Emissions from AWS (%s - %s)...",
+		startTime.Format("2006-01-02"), endTime.Format("2006-01-02"))
 
 	nextToken := (*string)(nil)
 
