@@ -43,15 +43,14 @@ var syncerCommand = &cobra.Command{
 func setRequiredFlags() {
 	syncerCommand.Flags().StringVarP(&rpcUrl, "rpc-url", "r", "",
 		"[REQUIRED] JSON-RPC endpoint URL of the node to sync from")
-	syncerCommand.MarkFlagRequired("rpc-url")
+	_ = syncerCommand.MarkFlagRequired("rpc-url")
 
 	syncerCommand.Flags().StringVarP(&connString, "db-conn", "c", "",
 		"[REQUIRED] PostgreSQL connection string (e.g. postgres://user:pass@host:5432/db)")
-	syncerCommand.MarkFlagRequired("db-conn")
+	_ = syncerCommand.MarkFlagRequired("db-conn")
 }
 
 func setOptionalFlags() {
-
 	syncerCommand.Flags().BoolVarP(&logging, "logging", "v", false,
 		"enable logging")
 
@@ -87,7 +86,7 @@ func setOptionalFlags() {
 		"how often the ERC-20 watchlist is checked for changes, in milliseconds")
 
 	syncerCommand.Flags().BoolVar(&erc20StartFromTip, "erc20-start-from-tip", false,
-		"when a token is added to the watchlist, start processing from the current chain tip instead of its last processed block")
+		"when a token is added to the watchlist, start processing from the chain tip instead of its last processed block")
 
 	syncerCommand.Flags().Uint64Var(&erc20ProcessInterval, "erc20-process-interval", 2000,
 		"how often the syncer retries processing a block for ERC-20 events when it is not yet available, in milliseconds")
@@ -96,7 +95,7 @@ func setOptionalFlags() {
 		"enable EOA activity tracking, recording the UTC hours in which each EOA address participated in a transaction")
 
 	syncerCommand.Flags().Uint64Var(&eoaActivityProcessInterval, "eoa-activity-process-interval", 2000,
-		"how often the syncer retries processing a block for EOA activity statistics when it is not yet available, in milliseconds")
+		"how often the syncer retries processing a block for EOA activity when it is not yet available, in milliseconds")
 
 	syncerCommand.Flags().Uint64Var(&circulationPollInterval, "circulation-poll-interval", 0,
 		"interval in milliseconds between circulation polls")

@@ -95,7 +95,6 @@ func TestCreateJob(t *testing.T) {
 
 func TestClassifyTransfer(t *testing.T) {
 	// We don't check the case when both `from` and `to` are zero addresses.
-
 	addr := common.HexToAddress("0x742d35Cc6634C0532925a3b844Bc454e4438f44e")
 
 	t.Run("mint", func(t *testing.T) {

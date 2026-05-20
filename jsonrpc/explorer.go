@@ -9,6 +9,8 @@ import (
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/explorer"
 )
 
+const nullConst = "null"
+
 // ExplorerHandler dispatches explorer_* JSON-RPC methods (polygon-edge compatible).
 type ExplorerHandler struct {
 	Explorer *explorer.Explorer
@@ -25,6 +27,7 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 	}
 
 	var out interface{}
+
 	var err error
 
 	switch method {
@@ -99,10 +102,11 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 
 // parseOptionalObject sets *ptr to nil when params empty, else unmarshals first array element into a new T.
 func parseOptionalObject[T any](params json.RawMessage, ptr **T) {
-	if len(params) == 0 || string(params) == "null" {
+	if len(params) == 0 || string(params) == nullConst {
 		*ptr = nil
 		return
 	}
+
 	var arr []json.RawMessage
 	if json.Unmarshal(params, &arr) != nil || len(arr) == 0 {
 		*ptr = nil
@@ -117,9 +121,10 @@ func parseOptionalObject[T any](params json.RawMessage, ptr **T) {
 }
 
 func parseFirstObject(params json.RawMessage, dst interface{}) {
-	if len(params) == 0 || string(params) == "null" {
+	if len(params) == 0 || string(params) == nullConst {
 		return
 	}
+
 	var arr []json.RawMessage
 	if json.Unmarshal(params, &arr) != nil || len(arr) == 0 {
 		return
@@ -128,20 +133,25 @@ func parseFirstObject(params json.RawMessage, dst interface{}) {
 }
 
 func parseStringParam(params json.RawMessage) (string, Error) {
-	if len(params) == 0 || string(params) == "null" {
+	if len(params) == 0 || string(params) == nullConst {
 		return "", nil
 	}
+
 	var arr []interface{}
+
 	if err := json.Unmarshal(params, &arr); err != nil {
 		return "", NewInvalidParamsError("Invalid Params")
 	}
+
 	if len(arr) == 0 {
 		return "", nil
 	}
+
 	s, ok := arr[0].(string)
 	if !ok {
 		return "", NewInvalidParamsError("Invalid Params")
 	}
+
 	return s, nil
 }
 
@@ -154,13 +164,17 @@ func HandleBody(h *ExplorerHandler, body []byte) ([]byte, error) {
 
 	if b[0] == '[' {
 		var reqs []Request
+
 		if err := json.Unmarshal(b, &reqs); err != nil {
 			return NewRPCResponse(nil, "2.0", nil, NewInvalidRequestError("Invalid json request")), nil
 		}
+
 		var parts [][]byte
+
 		for _, req := range reqs {
 			parts = append(parts, handleOne(h, req))
 		}
+
 		return bytesJoin(parts), nil
 	}
 
@@ -168,6 +182,7 @@ func HandleBody(h *ExplorerHandler, body []byte) ([]byte, error) {
 	if err := json.Unmarshal(b, &req); err != nil {
 		return NewRPCResponse(nil, "2.0", nil, NewInvalidRequestError("Invalid json request")), nil
 	}
+
 	if req.Method == "" {
 		id := req.ID
 		if len(id) == 0 {
@@ -197,14 +212,18 @@ func bytesJoin(parts [][]byte) []byte {
 	if len(parts) == 0 {
 		return []byte("[]")
 	}
+
 	var b []byte
 	b = append(b, '[')
+
 	for i, p := range parts {
 		if i > 0 {
 			b = append(b, ',')
 		}
 		b = append(b, p...)
 	}
+
 	b = append(b, ']')
+
 	return b
 }

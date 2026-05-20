@@ -31,8 +31,8 @@ func CreateJobs(txCount, workerCount uint64) []txworker.TxJob {
 		}
 
 		ranges = append(ranges, txworker.TxJob{
-			From: uint64(cursor),
-			To:   uint64(cursor) + size,
+			From: cursor,
+			To:   cursor + size,
 		})
 
 		cursor += size

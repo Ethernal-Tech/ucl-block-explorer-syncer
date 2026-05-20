@@ -44,6 +44,7 @@ func NewRPCResponse(id json.RawMessage, jsonrpcver string, reply []byte, err Err
 		Code:    err.ErrorCode(),
 		Message: err.Error(),
 	}
+
 	out, marshalErr := json.Marshal(ErrorResponse{
 		JSONRPC: jsonrpcver,
 		ID:      id,
@@ -78,6 +79,7 @@ func ParseRequestID(body []byte) json.RawMessage {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return []byte("null")
 	}
+
 	if id, ok := m["id"]; ok {
 		return id
 	}

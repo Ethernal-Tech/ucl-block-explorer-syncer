@@ -245,7 +245,7 @@ func (w *TxPoolWorker) shutDown(err error) {
 func (w *TxPoolWorker) log(str string, args ...any) {
 	if w.logger != nil {
 		w.logger.Log(fmt.Sprintf("%s [tx pool worker - %v] %s",
-			time.Now().Format("15:04:05.000"),
+			time.Now().UTC().Format("15:04:05.000"),
 			w.id,
 			fmt.Sprintf(str, args...)))
 	}

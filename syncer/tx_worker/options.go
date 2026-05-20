@@ -39,7 +39,6 @@ func WithRetry(maxRetries int64, retryInterval uint64) TxWorkerOption {
 			return fmt.Errorf("maxRetries must be between 1 and 500, or -1 for indefinite retries")
 		case retryInterval < 200 || retryInterval > 900000:
 			return fmt.Errorf("retryInterval must be between 200ms and 15 minutes (900000ms)")
-
 		}
 
 		s.maxRetries = maxRetries

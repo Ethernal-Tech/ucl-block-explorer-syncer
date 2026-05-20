@@ -333,7 +333,6 @@ func NewSyncer(
 	rpcURL string,
 	storage StorageHandler,
 	opts ...SyncerOption) (*Syncer, error) {
-
 	switch {
 	case rpcURL == "":
 		return nil, fmt.Errorf("rpcURL cannot be empty string")
@@ -380,7 +379,6 @@ func NewSyncer(
 			make(chan error, 1),
 			syncer.startBlockBW,
 		)
-
 		if err != nil {
 			return nil, err
 		}
@@ -410,7 +408,6 @@ func NewSyncer(
 				errCh,
 				syncer.startBlockTW,
 			)
-
 			if err != nil {
 				return nil, err
 			}
@@ -454,7 +451,6 @@ func NewSyncer(
 			make(chan struct{}, 1),
 			make(chan error, 1),
 		)
-
 		if err != nil {
 			return nil, err
 		}
@@ -577,7 +573,7 @@ func (s *Syncer) Start() error {
 				close(t.jobCh)
 			}
 
-			for range len(s.txwHandles) - int(numOfAlreadyDown) {
+			for range len(s.txwHandles) - numOfAlreadyDown {
 				<-s.txwHandles[0].doneCh
 			}
 		}
@@ -597,7 +593,6 @@ func (s *Syncer) Start() error {
 				block = s.getBlock()
 			} else {
 				block, err = s.storage.GetBlock(currentBlock)
-
 				if err != nil {
 					s.log("cannot get block %v: %s", currentBlock, err.Error())
 
@@ -891,7 +886,7 @@ func (s *Syncer) Start() error {
 					continue
 				}
 
-				errVal := val.Interface().(struct {
+				errVal, _ := val.Interface().(struct {
 					Err error
 					Id  string
 				})
@@ -1005,7 +1000,7 @@ func (s *Syncer) shutDown() {
 func (s *Syncer) log(str string, args ...any) {
 	if s.logger != nil {
 		s.logger.Log(fmt.Sprintf("%s [syncer] %s",
-			time.Now().Format("15:04:05.000"),
+			time.Now().UTC().Format("15:04:05.000"),
 			fmt.Sprintf(str, args...)))
 	}
 }
@@ -1064,7 +1059,6 @@ func (s *Syncer) createBlockWorkerHandle(
 		errCh,
 		opts...,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("cannot create block worker: %w", err)
 	}
@@ -1121,7 +1115,6 @@ func (s *Syncer) createTxPoolWorkerHandle(
 		errCh,
 		opts...,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("cannot create tx pool worker: %w", err)
 	}
@@ -1192,7 +1185,6 @@ func (s *Syncer) createTxWorkerHandle(
 		errCh,
 		opts...,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("cannot create tx worker: %w", err)
 	}
@@ -1283,7 +1275,6 @@ func (s *Syncer) createErc20WorkerHandle(
 	processLogsFn := func(block *types.Block, logs []*types.ReceiptLog) error {
 		if token.IsPrivate {
 			// TODO: handle private tokens
-
 			return nil
 		}
 
@@ -1352,7 +1343,6 @@ func (s *Syncer) createErc20WorkerHandle(
 		errCh,
 		opts...,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("cannot create ERC-20 worker: %w", err)
 	}
@@ -1475,7 +1465,6 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 		errCh,
 		opts...,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("cannot create eoa activity worker: %w", err)
 	}
@@ -1523,7 +1512,7 @@ func (s *Syncer) getBlock() *types.Block {
 	}
 
 	front := s.l.Front()
-	block := s.l.Remove(front).(*types.Block)
+	block, _ := s.l.Remove(front).(*types.Block)
 
 	s.m.Unlock()
 
