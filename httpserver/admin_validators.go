@@ -95,7 +95,6 @@ func (s *Server) handleUpsertValidator(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
-	//nolint:goconst
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ok":      true,
 		"address": address,

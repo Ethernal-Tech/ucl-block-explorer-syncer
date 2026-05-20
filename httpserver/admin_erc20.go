@@ -135,7 +135,6 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	//nolint:goconst
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ok":      true,
 		"address": normalized,
