@@ -52,12 +52,14 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 		if perr != nil {
 			return nil, perr
 		}
+
 		out, err = h.Explorer.GetTransactionByHash(hash)
 	case "explorer_getBlockTransactionCount":
 		blockNumber, perr := parseStringParam(params)
 		if perr != nil {
 			return nil, perr
 		}
+
 		out, err = h.Explorer.GetBlockTransactionCount(blockNumber)
 	case "explorer_getErc20DailyStats":
 		var req *api_storage.Erc20DailyStatsRequest
@@ -97,6 +99,7 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 	if mErr != nil {
 		return nil, NewInternalError("marshal result")
 	}
+
 	return raw, nil
 }
 
@@ -104,19 +107,26 @@ func (h *ExplorerHandler) Dispatch(method string, params json.RawMessage) ([]byt
 func parseOptionalObject[T any](params json.RawMessage, ptr **T) {
 	if len(params) == 0 || string(params) == nullConst {
 		*ptr = nil
+
 		return
 	}
 
 	var arr []json.RawMessage
+
 	if json.Unmarshal(params, &arr) != nil || len(arr) == 0 {
 		*ptr = nil
+
 		return
 	}
+
 	v := new(T)
+
 	if json.Unmarshal(arr[0], v) != nil {
 		*ptr = nil
+
 		return
 	}
+
 	*ptr = v
 }
 
@@ -126,9 +136,11 @@ func parseFirstObject(params json.RawMessage, dst interface{}) {
 	}
 
 	var arr []json.RawMessage
+
 	if json.Unmarshal(params, &arr) != nil || len(arr) == 0 {
 		return
 	}
+
 	_ = json.Unmarshal(arr[0], dst)
 }
 
@@ -188,6 +200,7 @@ func HandleBody(h *ExplorerHandler, body []byte) ([]byte, error) {
 		if len(id) == 0 {
 			id = []byte("null")
 		}
+
 		return NewRPCResponse(id, "2.0", nil, NewInvalidRequestError("Invalid json request")), nil
 	}
 
@@ -214,12 +227,14 @@ func bytesJoin(parts [][]byte) []byte {
 	}
 
 	var b []byte
+
 	b = append(b, '[')
 
 	for i, p := range parts {
 		if i > 0 {
 			b = append(b, ',')
 		}
+
 		b = append(b, p...)
 	}
 

@@ -37,8 +37,10 @@ func RecoverIBFTProposer(blockHashHex, extraDataHex string) string {
 	addr, err := recoverIBFTProposer(blockHashHex, extraDataHex)
 	if err != nil {
 		log.Printf("storage_handler: IBFT proposer recovery failed for block %s: %v", blockHashHex, err)
+
 		return ZeroAddress
 	}
+
 	return addr
 }
 
@@ -51,6 +53,7 @@ func recoverIBFTProposer(blockHashHex, extraDataHex string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decode extraData: %w", err)
 	}
+
 	if len(extra) <= IstanbulExtraVanity {
 		return "", fmt.Errorf("extraData length %d <= vanity %d", len(extra), IstanbulExtraVanity)
 	}
@@ -59,17 +62,21 @@ func recoverIBFTProposer(blockHashHex, extraDataHex string) (string, error) {
 	// CommittedSeals, ParentCommittedSeals?, RoundNumber?]). We only need
 	// element [1], so decode it as a list of raw RLP values.
 	var elems []rlp.RawValue
+
 	if err := rlp.DecodeBytes(extra[IstanbulExtraVanity:], &elems); err != nil {
 		return "", fmt.Errorf("rlp decode IBFT extra: %w", err)
 	}
+
 	if len(elems) < 3 {
 		return "", fmt.Errorf("IBFT extra has %d elements, want at least 3", len(elems))
 	}
 
 	var seal []byte
+
 	if err := rlp.DecodeBytes(elems[1], &seal); err != nil {
 		return "", fmt.Errorf("decode proposerSeal: %w", err)
 	}
+
 	if len(seal) != 65 {
 		return "", fmt.Errorf("proposerSeal length %d, want 65", len(seal))
 	}
@@ -92,5 +99,6 @@ func recoverIBFTProposer(blockHashHex, extraDataHex string) (string, error) {
 	// pub is the 65-byte uncompressed pubkey (0x04 || X || Y). The address is
 	// the last 20 bytes of keccak256(X||Y).
 	addr := common.BytesToAddress(crypto.Keccak256(pub[1:])[12:])
+
 	return strings.ToLower(addr.Hex()), nil
 }

@@ -90,13 +90,16 @@ func parseUint256Data(data string) (*big.Int, error) {
 	if s == "" || s == "0x" {
 		return big.NewInt(0), nil
 	}
+
 	b, err := hex.DecodeString(strings.TrimPrefix(s, "0x"))
 	if err != nil {
 		return nil, err
 	}
+
 	if len(b) > 32 {
 		return nil, fmt.Errorf("data too long")
 	}
+
 	return new(big.Int).SetBytes(b), nil
 }
 

@@ -44,9 +44,13 @@ func txsSortedByHash(txs []*types.Transaction) []*types.Transaction {
 	if len(txs) <= 1 {
 		return txs
 	}
+
 	out := make([]*types.Transaction, len(txs))
+
 	copy(out, txs)
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Hash < out[j].Hash })
+
 	return out
 }
 
@@ -497,6 +501,7 @@ func (h *PgStorageHandler) GetBlock(number uint64) (*types.Block, error) {
 	`, number)
 
 	var num uint64
+
 	var timestamp uint64
 
 	if err := row.Scan(&block.Hash, &num, &timestamp); err != nil {

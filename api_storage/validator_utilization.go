@@ -1,7 +1,6 @@
 package api_storage
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -45,6 +44,7 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	if req.Page <= 0 {
 		req.Page = 1
 	}
+
 	if req.PageSize <= 0 || req.PageSize > 500 {
 		req.PageSize = 50
 	}
@@ -52,19 +52,21 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	conn := getDB()
 	if conn == nil {
 		log.Printf("api_storage: database not configured")
+
 		return &ValidatorUtilizationResponse{
 			Code:    "500",
-			Message: "Database connection failed",
-		}, errors.New("database connection failed")
+			Message: messageDBConnectionFailed,
+		}, errDBConnectionFailed
 	}
 
 	g := normalizeGranularity(req.Granularity)
 
 	var truncExpr string
+
 	switch g {
-	case "hour":
+	case TypeHour:
 		truncExpr = "date_trunc('hour', to_timestamp(b.timestamp) AT TIME ZONE 'UTC')"
-	case "month":
+	case TypeMonth:
 		truncExpr = "date_trunc('month', to_timestamp(b.timestamp) AT TIME ZONE 'UTC')"
 	default:
 		truncExpr = "date_trunc('day', to_timestamp(b.timestamp) AT TIME ZONE 'UTC')"
@@ -80,14 +82,17 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 		if toEx.IsZero() {
 			toEx = time.Now().UTC()
 		}
+
 		from = toEx.AddDate(0, 0, -30)
 	}
+
 	if toEx.IsZero() {
 		toEx = time.Now().UTC()
 	}
 
 	// Limit query span per granularity
 	var maxDays int
+
 	switch g {
 	case "hour":
 		maxDays = 60
@@ -112,18 +117,23 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 
 	if req.Validator != "" {
 		filters += fmt.Sprintf(" AND lower(b.miner) = $%d", argIdx)
+
 		args = append(args, strings.ToLower(req.Validator))
+
 		argIdx++
 	}
 
 	filters += fmt.Sprintf(" AND b.timestamp >= extract(epoch from $%d::timestamptz)::bigint", argIdx)
+
 	args = append(args, from.UTC().Format(time.RFC3339))
+
 	argIdx++
 
 	filters += fmt.Sprintf(" AND b.timestamp < extract(epoch from $%d::timestamptz)::bigint", argIdx)
-	args = append(args, toEx.UTC().Format(time.RFC3339))
-	argIdx++
 
+	args = append(args, toEx.UTC().Format(time.RFC3339))
+
+	//nolint:gosec
 	query := fmt.Sprintf(`
 		SELECT
 			lower(b.miner) AS validator_address,
@@ -145,22 +155,27 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	if err != nil {
 		return &ValidatorUtilizationResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
-	defer rows.Close()
+
+	defer rows.Close() //nolint:errcheck
 
 	var list []ValidatorUtilizationRow
+
 	for rows.Next() {
 		var r ValidatorUtilizationRow
+
 		var bucket time.Time
+
 		if err := rows.Scan(&r.ValidatorAddress, &bucket, &r.BlockCount,
 			&r.GasUsedTotal, &r.GasLimitTotal, &r.UtilizationPct); err != nil {
 			return &ValidatorUtilizationResponse{
 				Code:    "500",
-				Message: "Database query failed",
+				Message: messageDBQueryFailed,
 			}, err
 		}
+
 		switch g {
 		case "hour":
 			r.BucketUtc = bucket.UTC().Format(time.RFC3339)
@@ -169,17 +184,20 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 		default:
 			r.BucketUtc = bucket.UTC().Format("2006-01-02")
 		}
+
 		list = append(list, r)
 	}
+
 	if err := rows.Err(); err != nil {
 		return &ValidatorUtilizationResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
 
 	total := int64(len(list))
 	offset := (req.Page - 1) * req.PageSize
+
 	if offset >= len(list) {
 		return &ValidatorUtilizationResponse{
 			Code: "200",
@@ -189,9 +207,10 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 				Page:     req.Page,
 				PageSize: req.PageSize,
 			},
-			Message: "Success",
+			Message: messageSuccess,
 		}, nil
 	}
+
 	end := offset + req.PageSize
 	if end > len(list) {
 		end = len(list)
@@ -205,6 +224,6 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 			Page:     req.Page,
 			PageSize: req.PageSize,
 		},
-		Message: "Success",
+		Message: messageSuccess,
 	}, nil
 }

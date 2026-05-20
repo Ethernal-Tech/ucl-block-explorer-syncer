@@ -38,6 +38,7 @@ func (e *Explorer) GetBlockList(req *api_storage.BlockListRequest) (interface{},
 	response, err := api_storage.GetBlockList(*req)
 	if err != nil {
 		e.logf("failed to get block list: %v", err)
+
 		return nil, err
 	}
 
@@ -56,6 +57,7 @@ func (e *Explorer) GetBlockDetail(req *api_storage.BlockDetailRequest) (interfac
 	response, err := api_storage.GetBlockDetail(*req)
 	if err != nil {
 		e.logf("failed to get block detail: %v", err)
+
 		return nil, err
 	}
 
@@ -66,17 +68,18 @@ func (e *Explorer) GetBlockDetail(req *api_storage.BlockDetailRequest) (interfac
 func (e *Explorer) GetLineData(req *api_storage.LineDataRequest) (interface{}, error) {
 	if req == nil {
 		req = &api_storage.LineDataRequest{
-			Type: "day",
+			Type: api_storage.TypeDay,
 		}
 	}
 
-	if req.Type != "day" && req.Type != "hour" {
-		req.Type = "day"
+	if req.Type != api_storage.TypeDay && req.Type != api_storage.TypeHour {
+		req.Type = api_storage.TypeDay
 	}
 
 	response, err := api_storage.GetLineData(*req)
 	if err != nil {
 		e.logf("failed to get line data: %v", err)
+
 		return nil, err
 	}
 
@@ -95,6 +98,7 @@ func (e *Explorer) GetTransactionList(req *api_storage.TransactionListRequest) (
 	response, err := api_storage.GetTransactionList(*req)
 	if err != nil {
 		e.logf("failed to get transaction list: %v", err)
+
 		return nil, err
 	}
 
@@ -113,6 +117,7 @@ func (e *Explorer) GetTransactionByHash(hash string) (interface{}, error) {
 	response, err := api_storage.GetTransactionByHash(hash)
 	if err != nil {
 		e.logf("failed to get transaction by hash: %v", err)
+
 		return nil, err
 	}
 
@@ -139,6 +144,7 @@ func (e *Explorer) GetBlockTransactionCount(blockNumber string) (interface{}, er
 	response, err := api_storage.GetBlockDetail(req)
 	if err != nil {
 		e.logf("failed to get block transaction count: %v", err)
+
 		return nil, err
 	}
 
@@ -164,25 +170,33 @@ func (e *Explorer) GetErc20DailyStats(req *api_storage.Erc20DailyStatsRequest) (
 	response, err := api_storage.GetErc20DailyStats(*req)
 	if err != nil {
 		e.logf("failed to get ERC-20 daily stats: %v", err)
+
 		return nil, err
 	}
 
 	return response, nil
 }
 
-// GetErc20CirculationCumulative returns paginated ascending UTC-day cumulative circulation (all watchlisted tokens, human units).
-func (e *Explorer) GetErc20CirculationCumulative(req *api_storage.Erc20CirculationCumulativeRequest) (interface{}, error) {
+// GetErc20CirculationCumulative returns paginated ascending UTC-day cumulative circulation,
+// all watchlisted tokens, human units
+func (e *Explorer) GetErc20CirculationCumulative(
+	req *api_storage.Erc20CirculationCumulativeRequest) (
+	interface{},
+	error) {
 	if req == nil {
 		req = &api_storage.Erc20CirculationCumulativeRequest{
 			Page:     1,
 			PageSize: 50,
 		}
 	}
+
 	response, err := api_storage.GetErc20CirculationCumulativeStats(*req)
 	if err != nil {
 		e.logf("failed to get ERC-20 circulation cumulative: %v", err)
+
 		return nil, err
 	}
+
 	return response, nil
 }
 
@@ -194,11 +208,14 @@ func (e *Explorer) GetActiveEntityDailyStats(req *api_storage.EntityDailyStatsRe
 			PageSize: 50,
 		}
 	}
+
 	response, err := api_storage.GetActiveEntityDailyStats(*req)
 	if err != nil {
 		e.logf("failed to get active entity daily stats: %v", err)
+
 		return nil, err
 	}
+
 	return response, nil
 }
 
@@ -210,11 +227,14 @@ func (e *Explorer) GetOnboardingEntityDailyStats(req *api_storage.EntityDailySta
 			PageSize: 50,
 		}
 	}
+
 	response, err := api_storage.GetOnboardingEntityDailyStats(*req)
 	if err != nil {
 		e.logf("failed to get onboarding entity daily stats: %v", err)
+
 		return nil, err
 	}
+
 	return response, nil
 }
 
@@ -223,6 +243,7 @@ func (e *Explorer) GetErc20Watchlist() (interface{}, error) {
 	response, err := api_storage.GetErc20Watchlist()
 	if err != nil {
 		e.logf("failed to get ERC-20 watchlist: %v", err)
+
 		return nil, err
 	}
 
@@ -237,11 +258,14 @@ func (e *Explorer) GetValidatorUtilization(req *api_storage.ValidatorUtilization
 			PageSize: 50,
 		}
 	}
+
 	response, err := api_storage.GetValidatorCapacityStats(*req)
 	if err != nil {
 		e.logf("failed to get validator capacity: %v", err)
+
 		return nil, err
 	}
+
 	return response, nil
 }
 
@@ -250,8 +274,10 @@ func (e *Explorer) GetValidatorMetadata() (interface{}, error) {
 	response, err := api_storage.GetValidatorMetadataList()
 	if err != nil {
 		e.logf("failed to get validator metadata: %v", err)
+
 		return nil, err
 	}
+
 	return response, nil
 }
 
@@ -259,6 +285,7 @@ func (e *Explorer) GetAssetIssuers() (interface{}, error) {
 	response, err := api_storage.GetAssetIssuerList()
 	if err != nil {
 		e.logf("failed to get asset issuers: %v", err)
+
 		return nil, err
 	}
 
