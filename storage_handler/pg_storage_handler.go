@@ -56,7 +56,7 @@ func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	var baseFee *uint64
 
@@ -141,7 +141,7 @@ func (h *PgStorageHandler) InsertTransactions(txs []*types.Transaction) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	paramsPerRow := 2
 	if !h.withTxs {
@@ -519,13 +519,15 @@ func (h *PgStorageHandler) GetBlock(number uint64) (*types.Block, error) {
 		return nil, fmt.Errorf("failed to query transactions: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	for rows.Next() {
-		var tx types.Transaction
-		var blockHash string
-		var blockNumber uint64
-		var blockTimestamp uint64
+		var (
+			tx             types.Transaction
+			blockHash      string
+			blockNumber    uint64
+			blockTimestamp uint64
+		)
 
 		if err := rows.Scan(&tx.Hash, &blockHash, &blockNumber, &blockTimestamp); err != nil {
 			return nil, fmt.Errorf("failed to scan transaction: %w", err)

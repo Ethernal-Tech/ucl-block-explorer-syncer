@@ -83,6 +83,7 @@ func recoverIBFTProposer(blockHashHex, extraDataHex string) (string, error) {
 	// ucl-node2/e2e/framework/helper.go). The seal is R||S||V with V in {0,1},
 	// which is exactly what go-ethereum's crypto.Ecrecover expects.
 	sigHash := crypto.Keccak256(blockHash)
+
 	pub, err := crypto.Ecrecover(sigHash, seal)
 	if err != nil {
 		return "", fmt.Errorf("ecrecover: %w", err)

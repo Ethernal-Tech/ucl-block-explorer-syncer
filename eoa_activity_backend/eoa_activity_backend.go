@@ -73,7 +73,7 @@ func (b *PgEoaActivityBackend) GetBlockParticipants(blockNum uint64) ([]*types.B
 		return nil, fmt.Errorf("failed to query block participants for block %d: %w", blockNum, err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	participants := []*types.BlockParticipant{}
 
@@ -103,7 +103,7 @@ func (b *PgEoaActivityBackend) FilterKnownEOAs(addresses []string) ([]string, er
 		return nil, fmt.Errorf("failed to filter known EOAs: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var known []string
 

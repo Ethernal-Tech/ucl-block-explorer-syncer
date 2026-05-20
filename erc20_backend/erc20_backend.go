@@ -29,7 +29,7 @@ func (b *PgErc20Backend) GetWatchlist() ([]*types.ERC20Token, error) {
 		return nil, fmt.Errorf("failed to query erc20 watchlist: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var tokens []*types.ERC20Token
 
@@ -109,7 +109,7 @@ func (b *PgErc20Backend) GetLogs(blockNum uint64, tokenAddr string, topics []str
 		return nil, fmt.Errorf("failed to query logs for block %d: %w", blockNum, err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var logs []types.ReceiptLog
 
