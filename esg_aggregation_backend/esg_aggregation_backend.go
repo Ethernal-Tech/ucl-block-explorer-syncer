@@ -142,7 +142,7 @@ func (b *ESGAggregationBackend) saveToDb(
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	for tm, result := range values {
 		t := time.Unix(tm, 0).UTC()

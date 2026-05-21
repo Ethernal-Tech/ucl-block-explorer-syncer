@@ -1589,7 +1589,6 @@ func (s *Syncer) createESGAggregationWorkerHandle() (*esgAggregationWorkerHandle
 		errCh,
 		opts...,
 	)
-
 	if err != nil {
 		return nil, fmt.Errorf("cannot create esg aggregation worker: %w", err)
 	}

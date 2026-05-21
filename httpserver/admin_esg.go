@@ -20,21 +20,21 @@ func (s *Server) handleAdminEsg(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if s.cfg.AdminAPISecret == "" {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "admin API disabled"})
+		writeError(w, http.StatusNotFound, "admin API disabled")
+
 		return
 	}
 
 	token := parseBearerToken(r)
 	if token == "" || !constantTimeEqualString(token, s.cfg.AdminAPISecret) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+
 		return
 	}
 
 	if s.cfg.DB == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "database not configured"})
+		writeError(w, http.StatusServiceUnavailable, "database not configured")
+
 		return
 	}
 
@@ -113,7 +113,7 @@ func writeEsgData(
 		return fmt.Errorf("failed to retrieve esg data from db: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	data := []esgResponse{}
 

@@ -22,9 +22,12 @@ var genConfigCommand = &cobra.Command{
 
 func init() {
 	genConfigCommand.Flags().StringVarP(&cfgOut, "output", "o", "config.json", "output file path")
-	genConfigCommand.Flags().StringSliceVar(&cfgFilterRegions, "esg-filter-regions", nil, "ESG filter region (repeatable)")
-	genConfigCommand.Flags().StringSliceVar(&cfgFilterServices, "esg-filter-services", nil, "ESG filter service (repeatable)")
-	genConfigCommand.Flags().StringSliceVar(&cfgFilterUsageAccountIds, "esg-filter-usage-account-ids", nil, "ESG filter usage account id (repeatable)")
+	genConfigCommand.Flags().StringSliceVar(
+		&cfgFilterRegions, "esg-filter-regions", nil, "ESG filter region (repeatable)")
+	genConfigCommand.Flags().StringSliceVar(
+		&cfgFilterServices, "esg-filter-services", nil, "ESG filter service (repeatable)")
+	genConfigCommand.Flags().StringSliceVar(
+		&cfgFilterUsageAccountIds, "esg-filter-usage-account-ids", nil, "ESG filter usage account id (repeatable)")
 }
 
 func runGenConfig(cmd *cobra.Command, args []string) error {
