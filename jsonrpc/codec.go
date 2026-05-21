@@ -37,6 +37,7 @@ func NewRPCResponse(id json.RawMessage, jsonrpcver string, reply []byte, err Err
 		if marshalErr != nil {
 			return mustErr(nil, jsonrpcver, NewInternalError("marshal result"))
 		}
+
 		return out
 	}
 
@@ -44,6 +45,7 @@ func NewRPCResponse(id json.RawMessage, jsonrpcver string, reply []byte, err Err
 		Code:    err.ErrorCode(),
 		Message: err.Error(),
 	}
+
 	out, marshalErr := json.Marshal(ErrorResponse{
 		JSONRPC: jsonrpcver,
 		ID:      id,
@@ -52,6 +54,7 @@ func NewRPCResponse(id json.RawMessage, jsonrpcver string, reply []byte, err Err
 	if marshalErr != nil {
 		return []byte(`{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal"}}`)
 	}
+
 	return out
 }
 
@@ -61,6 +64,7 @@ func mustErr(id json.RawMessage, ver string, err Error) []byte {
 		ID:      id,
 		Error:   &ObjectError{Code: err.ErrorCode(), Message: err.Error()},
 	})
+
 	return b
 }
 
@@ -69,6 +73,7 @@ func NormalizeID(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return []byte("null")
 	}
+
 	return raw
 }
 
@@ -78,14 +83,17 @@ func ParseRequestID(body []byte) json.RawMessage {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return []byte("null")
 	}
+
 	if id, ok := m["id"]; ok {
 		return id
 	}
+
 	return []byte("null")
 }
 
 // IsBatchRequest returns true if body is a JSON array.
 func IsBatchRequest(body []byte) bool {
 	b := bytes.TrimLeft(body, " \t\r\n")
+
 	return len(b) > 0 && b[0] == '['
 }

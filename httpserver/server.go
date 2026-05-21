@@ -34,6 +34,7 @@ func New(ex *explorer.Explorer, cfg Config) *Server {
 	if cfg.Version == "" {
 		cfg.Version = "0.0.1"
 	}
+
 	return &Server{
 		explorer: ex,
 		cfg:      cfg,
@@ -47,14 +48,17 @@ func New(ex *explorer.Explorer, cfg Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+
 	if s.cfg.DB != nil {
 		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.handleAdminErc20Watchlist)
 		mux.HandleFunc("/admin/v1/validators/", s.handleAdminValidators)
 		mux.HandleFunc("/admin/v1/asset-issuers/", s.handleAdminAssetIssuers)
 		mux.HandleFunc("/admin/v1/asset-issuers", s.handleAdminAssetIssuers)
 	}
+
 	mux.Handle("/", http.HandlerFunc(s.handle))
 	mux.HandleFunc("/ws", s.handleWS)
+
 	return middlewareFactory()(mux)
 }
 
@@ -88,6 +92,7 @@ func (s *Server) handleJSONRPCRequest(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
 	if err != nil {
 		_, _ = w.Write([]byte(err.Error()))
+
 		return
 	}
 
@@ -112,11 +117,14 @@ func (s *Server) handleGetRequest(w http.ResponseWriter) {
 		ChainID: s.cfg.ChainID,
 		Version: s.cfg.Version,
 	}
+
 	resp, err := json.Marshal(data)
 	if err != nil {
 		_, _ = w.Write([]byte(err.Error()))
+
 		return
 	}
+
 	_, _ = w.Write(resp)
 }
 
@@ -135,10 +143,13 @@ func middlewareFactory() func(http.Handler) http.Handler {
 				"Access-Control-Allow-Headers",
 				"Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization",
 			)
+
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
+
 				return
 			}
+
 			next.ServeHTTP(w, r)
 		})
 	}

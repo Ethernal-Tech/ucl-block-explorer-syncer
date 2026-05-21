@@ -44,9 +44,13 @@ func txsSortedByHash(txs []*types.Transaction) []*types.Transaction {
 	if len(txs) <= 1 {
 		return txs
 	}
+
 	out := make([]*types.Transaction, len(txs))
+
 	copy(out, txs)
+
 	sort.Slice(out, func(i, j int) bool { return out[i].Hash < out[j].Hash })
+
 	return out
 }
 
@@ -56,9 +60,10 @@ func (h *PgStorageHandler) InsertBlock(block *types.Block) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	var baseFee *uint64
+
 	if block.BaseFeePerGas != nil {
 		fee := block.BaseFeePerGas.ToInt().Uint64()
 		baseFee = &fee
@@ -140,7 +145,7 @@ func (h *PgStorageHandler) InsertTransactions(txs []*types.Transaction) error {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	paramsPerRow := 2
 	if !h.withTxs {
@@ -183,8 +188,8 @@ func (h *PgStorageHandler) InsertTransactions(txs []*types.Transaction) error {
 
 func (h *PgStorageHandler) batchInsertLogs(tx *sql.Tx, logs []types.ReceiptLog) error {
 	var (
-		placeholders []string
-		args         []any
+		placeholders []string //nolint:prealloc
+		args         []any    //nolint:prealloc
 		argIdx       = 1
 	)
 
@@ -402,7 +407,7 @@ func (h *PgStorageHandler) batchInsertTransactionsWithStatus(tx *sql.Tx, txs []*
 			}
 
 			placeholders = append(placeholders, fmt.Sprintf(
-				"($%d,$%d,$%d,$%d::NUMERIC,$%d::BIGINT,$%d::BIGINT,$%d::NUMERIC,$%d::NUMERIC,$%d::NUMERIC,$%d,$%d,$%d::SMALLINT,$%d,$%d)",
+				"($%d,$%d,$%d,$%d::NUMERIC,$%d::BIGINT,$%d::BIGINT,$%d::NUMERIC,$%d::NUMERIC,$%d::NUMERIC,$%d,$%d,$%d::SMALLINT,$%d,$%d)", //nolint:lll
 				argIdx, argIdx+1, argIdx+2, argIdx+3, argIdx+4, argIdx+5,
 				argIdx+6, argIdx+7, argIdx+8, argIdx+9, argIdx+10, argIdx+11,
 				argIdx+12, argIdx+13,
@@ -496,6 +501,7 @@ func (h *PgStorageHandler) GetBlock(number uint64) (*types.Block, error) {
 	`, number)
 
 	var num uint64
+
 	var timestamp uint64
 
 	if err := row.Scan(&block.Hash, &num, &timestamp); err != nil {
@@ -518,13 +524,15 @@ func (h *PgStorageHandler) GetBlock(number uint64) (*types.Block, error) {
 		return nil, fmt.Errorf("failed to query transactions: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	for rows.Next() {
-		var tx types.Transaction
-		var blockHash string
-		var blockNumber uint64
-		var blockTimestamp uint64
+		var (
+			tx             types.Transaction
+			blockHash      string
+			blockNumber    uint64
+			blockTimestamp uint64
+		)
 
 		if err := rows.Scan(&tx.Hash, &blockHash, &blockNumber, &blockTimestamp); err != nil {
 			return nil, fmt.Errorf("failed to scan transaction: %w", err)
@@ -556,7 +564,7 @@ func (h *PgStorageHandler) InsertPoolTransactions(pending, queued []*types.Trans
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer db.Rollback()
+	defer db.Rollback() //nolint:errcheck
 
 	paramsPerRow := 14
 	chunkSize := 65535 / paramsPerRow
@@ -572,7 +580,11 @@ func (h *PgStorageHandler) InsertPoolTransactions(pending, queued []*types.Trans
 	return db.Commit()
 }
 
-func (h *PgStorageHandler) batchInsertPoolTransactions(db *sql.Tx, txs []*types.Transaction, status string, chunkSize int) error {
+func (h *PgStorageHandler) batchInsertPoolTransactions(
+	db *sql.Tx,
+	txs []*types.Transaction,
+	status string,
+	chunkSize int) error {
 	for i := 0; i < len(txs); i += chunkSize {
 		end := min(i+chunkSize, len(txs))
 
@@ -586,8 +598,8 @@ func (h *PgStorageHandler) batchInsertPoolTransactions(db *sql.Tx, txs []*types.
 
 func (h *PgStorageHandler) batchInsertPoolTransactionsChunk(db *sql.Tx, txs []*types.Transaction, status string) error {
 	var (
-		placeholders []string
-		args         []any
+		placeholders []string //nolint:prealloc
+		args         []any    //nolint:prealloc
 		argIdx       = 1
 	)
 
@@ -662,7 +674,6 @@ func (h *PgStorageHandler) GetLastBlockNumber() (*uint64, error) {
 	var number *uint64
 
 	err := h.db.QueryRow(`SELECT MAX(number) FROM chain.blocks`).Scan(&number)
-
 	if err != nil {
 		return nil, fmt.Errorf("failed to query last block number: %w", err)
 	}
@@ -676,7 +687,6 @@ func (h *PgStorageHandler) GetTxWorkerLastBlockProcessed() (*uint64, error) {
 	err := h.db.QueryRow(`
 		SELECT value FROM chain.metadata WHERE key = 'txworker_last_block_processed'
 	`).Scan(&value)
-
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil

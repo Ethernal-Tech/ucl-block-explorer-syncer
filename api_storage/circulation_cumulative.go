@@ -2,7 +2,6 @@ package api_storage
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 func utcCalendarDate(t time.Time) time.Time {
 	t = t.UTC()
+
 	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
@@ -44,11 +44,14 @@ func parseCirculationTimeRange(conn *sql.DB, req Erc20CirculationCumulativeReque
 		if err != nil {
 			return time.Time{}, time.Time{}, fmt.Errorf("fromDay: %w", err)
 		}
+
 		from = time.Date(fd.Year(), fd.Month(), fd.Day(), 0, 0, 0, 0, time.UTC)
+
 		return from, toEx, nil
 	}
 
 	var ms sql.NullTime
+
 	_ = conn.QueryRow(`
 		SELECT MIN(s.hour_utc) FROM chain.erc20_hourly_stats s
 		INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
@@ -56,18 +59,24 @@ func parseCirculationTimeRange(conn *sql.DB, req Erc20CirculationCumulativeReque
 	`).Scan(&ms)
 	if ms.Valid {
 		from = utcHourStart(ms.Time)
+
 		return from, toEx, nil
 	}
+
 	from = toEx.AddDate(0, 0, -1)
 
 	return from, toEx, nil
 }
 
 // GetErc20CirculationCumulativeStats returns paginated ascending cumulative circulation with optional granularity.
-func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (*Erc20CirculationCumulativeResponse, error) {
+func GetErc20CirculationCumulativeStats(
+	req Erc20CirculationCumulativeRequest) (
+	*Erc20CirculationCumulativeResponse,
+	error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
+
 	if req.PageSize <= 0 || req.PageSize > 500 {
 		req.PageSize = 50
 	}
@@ -75,10 +84,11 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 	conn := getDB()
 	if conn == nil {
 		log.Printf("api_storage: database not configured")
+
 		return &Erc20CirculationCumulativeResponse{
 			Code:    "500",
-			Message: "Database connection failed",
-		}, errors.New("database connection failed")
+			Message: messageDBConnectionFailed,
+		}, errDBConnectionFailed
 	}
 
 	g := normalizeGranularity(req.Granularity)
@@ -97,11 +107,11 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 				Page:     req.Page,
 				PageSize: req.PageSize,
 			},
-			Message: "Success",
+			Message: messageSuccess,
 		}, nil
 	}
 
-	if g == "hour" {
+	if g == TypeHour {
 		if hoursInRange(from, toEx) > maxHourlyStatsSpanHours {
 			return &Erc20CirculationCumulativeResponse{
 				Code:    "400",
@@ -121,18 +131,20 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 	var merged []Erc20CirculationCumulativeRow
 
 	switch g {
-	case "hour":
+	case TypeHour:
 		merged, err = buildCirculationHourlySeries(conn, from, toEx)
-	case "month":
+	case TypeMonth:
 		merged, err = buildCirculationMonthlySeries(conn, from, toEx)
 	default:
 		merged, err = buildCirculationDailySeries(conn, from, toEx)
 	}
+
 	if err != nil {
 		log.Printf("api_storage: circulation series: %v", err)
+
 		return &Erc20CirculationCumulativeResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
 
@@ -146,7 +158,7 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 				Page:     req.Page,
 				PageSize: req.PageSize,
 			},
-			Message: "Success",
+			Message: messageSuccess,
 		}, nil
 	}
 
@@ -160,13 +172,15 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 				Page:     req.Page,
 				PageSize: req.PageSize,
 			},
-			Message: "Success",
+			Message: messageSuccess,
 		}, nil
 	}
+
 	end := offset + req.PageSize
 	if end > len(merged) {
 		end = len(merged)
 	}
+
 	pageSlice := merged[offset:end]
 
 	return &Erc20CirculationCumulativeResponse{
@@ -177,7 +191,7 @@ func GetErc20CirculationCumulativeStats(req Erc20CirculationCumulativeRequest) (
 			Page:     req.Page,
 			PageSize: req.PageSize,
 		},
-		Message: "Success",
+		Message: messageSuccess,
 	}, nil
 }
 
@@ -200,22 +214,29 @@ func buildCirculationHourlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Ci
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+
+	defer rows.Close() //nolint:errcheck
 
 	var out []Erc20CirculationCumulativeRow
+
 	for rows.Next() {
 		var hourUtc time.Time
+
 		var total string
+
 		if err := rows.Scan(&hourUtc, &total); err != nil {
 			return nil, err
 		}
+
 		h := utcHourStart(hourUtc)
+
 		out = append(out, Erc20CirculationCumulativeRow{
 			DayUtc:    h.Format(time.RFC3339),
 			BucketUtc: h.Format(time.RFC3339),
 			Total:     strings.TrimSpace(total),
 		})
 	}
+
 	return out, rows.Err()
 }
 func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20CirculationCumulativeRow, error) {
@@ -238,22 +259,29 @@ func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Cir
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+
+	defer rows.Close() //nolint:errcheck
 
 	var out []Erc20CirculationCumulativeRow
+
 	for rows.Next() {
 		var bucket time.Time
+
 		var total string
+
 		if err := rows.Scan(&bucket, &total); err != nil {
 			return nil, err
 		}
+
 		b := utcCalendarDate(bucket)
+
 		out = append(out, Erc20CirculationCumulativeRow{
 			DayUtc:    b.Format("2006-01-02"),
 			BucketUtc: b.Format(time.RFC3339),
 			Total:     strings.TrimSpace(total),
 		})
 	}
+
 	return out, rows.Err()
 }
 
@@ -286,21 +314,27 @@ func buildCirculationMonthlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20C
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var out []Erc20CirculationCumulativeRow
+
 	for rows.Next() {
 		var bucket time.Time
+
 		var total string
+
 		if err := rows.Scan(&bucket, &total); err != nil {
 			return nil, err
 		}
+
 		b := time.Date(bucket.Year(), bucket.Month(), 1, 0, 0, 0, 0, time.UTC)
+
 		out = append(out, Erc20CirculationCumulativeRow{
 			DayUtc:    b.Format("2006-01-02"),
 			BucketUtc: b.Format(time.RFC3339),
 			Total:     strings.TrimSpace(total),
 		})
 	}
+
 	return out, rows.Err()
 }

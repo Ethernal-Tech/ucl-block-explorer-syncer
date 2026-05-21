@@ -1,0 +1,71 @@
+---
+name: CI
+
+concurrency:
+  group: ${{ github.event_name }}-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on: # yamllint disable-line rule:truthy
+  schedule:
+    - cron: "0 0 * * *"
+
+  push:
+    branches:
+      - main
+
+  pull_request: {}
+
+  workflow_dispatch:
+    inputs:
+      unit_test:
+        description: Unit Tests
+        type: boolean
+        default: true      
+
+  workflow_call:
+    inputs:
+      unit_test:
+        description: Unit Tests
+        type: boolean
+        required: true
+
+    outputs:
+      build:
+        description: Build output
+        value: ${{ jobs.build.outputs.workflow_output }}
+      lint:
+        description: Lint output
+        value: ${{ jobs.lint.outputs.workflow_output }}
+      unit_test:
+        description: Unit Tests output
+        value: ${{ jobs.unit_test.outputs.workflow_output }}      
+
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+
+  lint:
+    name: Lint
+    uses: ./.github/workflows/lint.yml
+    needs: build
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+
+  unit_test:
+    name: Unit Tests
+    uses: ./.github/workflows/test.yml
+    needs: build
+    if: |
+      inputs.unit_test ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule'

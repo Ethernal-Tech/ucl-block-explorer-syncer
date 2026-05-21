@@ -2,7 +2,6 @@ package api_storage
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 )
@@ -24,7 +23,7 @@ type ValidatorMetadataListResponse struct {
 func UpsertValidatorMetadata(m ValidatorMetadata) error {
 	conn := getDB()
 	if conn == nil {
-		return errors.New("database connection failed")
+		return errDBConnectionFailed
 	}
 
 	_, err := conn.Exec(`
@@ -46,7 +45,7 @@ func UpsertValidatorMetadata(m ValidatorMetadata) error {
 func DeleteValidatorMetadata(address string) error {
 	conn := getDB()
 	if conn == nil {
-		return errors.New("database connection failed")
+		return errDBConnectionFailed
 	}
 
 	res, err := conn.Exec(`DELETE FROM chain.validator_metadata WHERE address = $1`, address)
@@ -66,10 +65,11 @@ func GetValidatorMetadataList() (*ValidatorMetadataListResponse, error) {
 	conn := getDB()
 	if conn == nil {
 		log.Printf("api_storage: database not configured")
+
 		return &ValidatorMetadataListResponse{
 			Code:    "500",
-			Message: "Database connection failed",
-		}, errors.New("database connection failed")
+			Message: messageDBConnectionFailed,
+		}, errDBConnectionFailed
 	}
 
 	rows, err := conn.Query(`
@@ -81,32 +81,37 @@ func GetValidatorMetadataList() (*ValidatorMetadataListResponse, error) {
 	if err != nil {
 		return &ValidatorMetadataListResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
-	defer rows.Close()
+
+	defer rows.Close() //nolint:errcheck
 
 	var list []ValidatorMetadata
+
 	for rows.Next() {
 		var v ValidatorMetadata
+
 		if err := rows.Scan(&v.Address, &v.Name, &v.Institution, &v.Region, &v.UpdatedAt); err != nil {
 			return &ValidatorMetadataListResponse{
 				Code:    "500",
-				Message: "Database query failed",
+				Message: messageDBQueryFailed,
 			}, err
 		}
+
 		list = append(list, v)
 	}
+
 	if err := rows.Err(); err != nil {
 		return &ValidatorMetadataListResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
 
 	return &ValidatorMetadataListResponse{
 		Code:    "200",
-		Message: "Success",
+		Message: messageSuccess,
 		Data:    list,
 	}, nil
 }

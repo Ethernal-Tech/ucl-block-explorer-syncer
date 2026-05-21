@@ -2,6 +2,7 @@ package erc20backend
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -28,7 +29,7 @@ func (b *PgErc20Backend) GetWatchlist() ([]*types.ERC20Token, error) {
 		return nil, fmt.Errorf("failed to query erc20 watchlist: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var tokens []*types.ERC20Token
 
@@ -58,7 +59,7 @@ func (b *PgErc20Backend) GetTip() (uint64, error) {
 	err := b.db.QueryRow(`
 		SELECT value FROM chain.metadata WHERE key = 'txworker_last_block_processed'
 	`).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 
@@ -108,12 +109,13 @@ func (b *PgErc20Backend) GetLogs(blockNum uint64, tokenAddr string, topics []str
 		return nil, fmt.Errorf("failed to query logs for block %d: %w", blockNum, err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var logs []types.ReceiptLog
 
 	for rows.Next() {
 		var l types.ReceiptLog
+
 		var t pq.StringArray
 
 		if err := rows.Scan(
@@ -146,7 +148,7 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	_, err = tx.Exec(`
 		WITH prev AS (

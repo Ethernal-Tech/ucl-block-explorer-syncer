@@ -13,6 +13,7 @@ func TestTxsSortedByHash_order(t *testing.T) {
 		{Hash: "0xcc"},
 	}
 	got := txsSortedByHash(txs)
+
 	if got[0].Hash != "0xaa" || got[1].Hash != "0xbb" || got[2].Hash != "0xcc" {
 		t.Fatalf("got %v %v %v", got[0].Hash, got[1].Hash, got[2].Hash)
 	}

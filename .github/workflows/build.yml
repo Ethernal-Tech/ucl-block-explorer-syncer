@@ -1,0 +1,120 @@
+---
+name: Build
+
+on: # yamllint disable-line rule:truthy
+  workflow_call:
+    outputs:
+      workflow_output:
+        description: Build output
+        value: ${{ jobs.go_build.outputs.output_failure }}
+
+jobs:
+  go_build:
+    name: Build
+    runs-on: ubuntu-latest
+    outputs:
+      output_failure: ${{ steps.build_failure.outputs.result }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v6.3.0
+        with:
+          go-version: ${{ vars.GO_VERSION }}
+
+      - name: Set Version Variables
+        id: set_version
+        run: |
+          echo "VERSION=$(git describe --tags --always)" >> $GITHUB_OUTPUT
+          echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "BRANCH=$(git rev-parse --abbrev-ref HEAD | tr -d '[:space:]')" >> $GITHUB_OUTPUT
+          echo "BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: |
+          go build \
+          -o ucl-block-explorer-syncer \
+          -tags netgo,osusergo \
+          -ldflags "-s -w -linkmode external -extldflags '-static' \
+            -X 'github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning.Version=${VERSION}' \
+            -X 'github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning.Commit=${COMMIT_HASH}' \
+            -X 'github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning.Branch=${BRANCH}' \
+            -X 'github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning.BuildTime=${TIME}'" \
+          main.go
+        env:
+          CC: gcc
+          CXX: g++
+          GOARCH: amd64
+          GOOS: linux
+
+      - name: Build Failed
+        if: failure()
+        id: build_failure
+        run: echo "result=false" >> $GITHUB_OUTPUT
+
+      - name: Upload Build Artifact
+        id: build_artifact
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: ucl-block-explorer-syncer
+          path: ucl-block-explorer-syncer
+          retention-days: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 90 || 3 }}
+
+      - name: Generate Revision File
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          cat <<EOF > revision.yml
+          ---
+          app_name: 'UCL Block Explorer Syncer'
+          artifact_file_name: 'ucl-block-explorer-syncer'
+          artifact_url: '${{ steps.build_artifact.outputs.artifact-url }}'
+          git_url: '${{ github.server_url }}/${{ github.repository }}.git'
+          git_version: '${{ steps.set_version.outputs.VERSION }}'
+          git_commit: '${{ steps.set_version.outputs.COMMIT }}'
+          git_branch: '${{ steps.set_version.outputs.BRANCH }}'
+          git_build_time: '${{ steps.set_version.outputs.BUILD_TIME }}'
+          EOF
+  
+      - name: Upload Revision Artifact
+        uses: actions/upload-artifact@v7.0.0
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        with:
+          path: revision.yml
+          retention-days: 90
+          archive: false
+
+  go_build_reproducibility:
+    name: Verify Build Reproducibility
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+
+      - name: Setup Go environment
+        uses: actions/setup-go@v6.3.0
+        with:
+          go-version: ${{ vars.GO_VERSION }}
+
+      - name: Reproduce builds
+        continue-on-error: true
+        run: |
+          go build -o ./build-1 -trimpath -buildvcs=false
+          go build -o ./build-2 -trimpath -buildvcs=false
+
+          buildsha1=$(shasum -a256 ./build-1 | awk '{print $1}')
+          buildsha2=$(shasum -a256 ./build-2 | awk '{print $1}')
+
+          echo "Build 1 SHA: $buildsha1"
+          echo "Build 2 SHA: $buildsha2"
+
+          if [ "$buildsha1" != "$buildsha2" ]; then
+            echo "Build artifact does not match original"
+            exit 1
+          else
+            echo "Build artifact matches original"
+          fi

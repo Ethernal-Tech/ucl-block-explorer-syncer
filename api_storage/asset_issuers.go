@@ -2,7 +2,6 @@ package api_storage
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -29,16 +28,18 @@ type AssetIssuerListResponse struct {
 func CreateAssetIssuer(issuer AssetIssuer) (string, error) {
 	conn := getDB()
 	if conn == nil {
-		return "", errors.New("database connection failed")
+		return "", errDBConnectionFailed
 	}
 
 	tx, err := conn.Begin()
 	if err != nil {
 		return "", fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+
+	defer tx.Rollback() //nolint:errcheck
 
 	var id string
+
 	err = tx.QueryRow(`
 		INSERT INTO chain.asset_issuers (name, website, contact, region, updated_at)
 		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
@@ -63,14 +64,15 @@ func CreateAssetIssuer(issuer AssetIssuer) (string, error) {
 func UpdateAssetIssuer(issuer AssetIssuer) error {
 	conn := getDB()
 	if conn == nil {
-		return errors.New("database connection failed")
+		return errDBConnectionFailed
 	}
 
 	tx, err := conn.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+
+	defer tx.Rollback() //nolint:errcheck
 
 	res, err := tx.Exec(`
 		UPDATE chain.asset_issuers SET
@@ -109,7 +111,7 @@ func UpdateAssetIssuer(issuer AssetIssuer) error {
 func DeleteAssetIssuer(id string) error {
 	conn := getDB()
 	if conn == nil {
-		return errors.New("database connection failed")
+		return errDBConnectionFailed
 	}
 
 	res, err := conn.Exec(`DELETE FROM chain.asset_issuers WHERE id = $1`, id)
@@ -129,10 +131,11 @@ func GetAssetIssuerList() (*AssetIssuerListResponse, error) {
 	conn := getDB()
 	if conn == nil {
 		log.Printf("api_storage: database not configured")
+
 		return &AssetIssuerListResponse{
 			Code:    "500",
-			Message: "Database connection failed",
-		}, errors.New("database connection failed")
+			Message: messageDBConnectionFailed,
+		}, errDBConnectionFailed
 	}
 
 	rows, err := conn.Query(`
@@ -147,35 +150,42 @@ func GetAssetIssuerList() (*AssetIssuerListResponse, error) {
 	if err != nil {
 		return &AssetIssuerListResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
-	defer rows.Close()
+
+	defer rows.Close() //nolint:errcheck
 
 	var list []AssetIssuer
+
 	for rows.Next() {
 		var issuer AssetIssuer
+
 		var assets pq.StringArray
+
 		if err := rows.Scan(&issuer.ID, &issuer.Name, &issuer.Website, &issuer.Contact,
 			&issuer.Region, &issuer.UpdatedAt, &assets); err != nil {
 			return &AssetIssuerListResponse{
 				Code:    "500",
-				Message: "Database query failed",
+				Message: messageDBQueryFailed,
 			}, err
 		}
+
 		issuer.Assets = []string(assets)
+
 		list = append(list, issuer)
 	}
+
 	if err := rows.Err(); err != nil {
 		return &AssetIssuerListResponse{
 			Code:    "500",
-			Message: "Database query failed",
+			Message: messageDBQueryFailed,
 		}, err
 	}
 
 	return &AssetIssuerListResponse{
 		Code:    "200",
-		Message: "Success",
+		Message: messageSuccess,
 		Data:    list,
 	}, nil
 }
@@ -186,6 +196,7 @@ func linkTokens(tx *sql.Tx, issuerID string, assets []string) error {
 		if addr == "" {
 			continue
 		}
+
 		_, err := tx.Exec(`
 			INSERT INTO chain.asset_issuer_tokens (issuer_id, token_address)
 			VALUES ($1, $2)
@@ -194,12 +205,15 @@ func linkTokens(tx *sql.Tx, issuerID string, assets []string) error {
 			if strings.Contains(err.Error(), "violates foreign key") {
 				return fmt.Errorf("token %s not found in watchlist", addr)
 			}
+
 			if strings.Contains(err.Error(), "violates unique constraint") {
 				return fmt.Errorf("token %s already assigned to another issuer", addr)
 			}
+
 			return fmt.Errorf("link token %s: %w", addr, err)
 		}
 	}
+
 	return nil
 }
 
@@ -207,5 +221,6 @@ func nullIfEmpty(s string) interface{} {
 	if s == "" {
 		return nil
 	}
+
 	return s
 }

@@ -2,6 +2,7 @@ package eoaactivitybackend
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -24,7 +25,7 @@ func (b *PgEoaActivityBackend) GetLastProcessedBlock() (*uint64, error) {
 	err := b.db.QueryRow(`
 		SELECT value FROM chain.metadata WHERE key = 'eoa_activity_last_block_processed'
 	`).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 
@@ -46,7 +47,7 @@ func (b *PgEoaActivityBackend) GetBlockParticipants(blockNum uint64) ([]*types.B
 	err := b.db.QueryRow(`
 		SELECT value FROM chain.metadata WHERE key = 'txworker_last_block_processed'
 	`).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 
@@ -72,7 +73,7 @@ func (b *PgEoaActivityBackend) GetBlockParticipants(blockNum uint64) ([]*types.B
 		return nil, fmt.Errorf("failed to query block participants for block %d: %w", blockNum, err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	participants := []*types.BlockParticipant{}
 
@@ -102,7 +103,7 @@ func (b *PgEoaActivityBackend) FilterKnownEOAs(addresses []string) ([]string, er
 		return nil, fmt.Errorf("failed to filter known EOAs: %w", err)
 	}
 
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var known []string
 
@@ -135,7 +136,7 @@ func (b *PgEoaActivityBackend) RecordEOAActivity(blockNum uint64, addresses []st
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	for _, addr := range addresses {
 		_, err := tx.Exec(`
@@ -143,7 +144,6 @@ func (b *PgEoaActivityBackend) RecordEOAActivity(blockNum uint64, addresses []st
 			VALUES ($1, $2)
 			ON CONFLICT DO NOTHING
 		`, hour, addr)
-
 		if err != nil {
 			return fmt.Errorf("failed to record EOA activity for address %s: %w", addr, err)
 		}
@@ -153,7 +153,6 @@ func (b *PgEoaActivityBackend) RecordEOAActivity(blockNum uint64, addresses []st
 		INSERT INTO chain.metadata (key, value) VALUES ('eoa_activity_last_block_processed', $1)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 	`, strconv.FormatUint(blockNum, 10))
-
 	if err != nil {
 		return fmt.Errorf("failed to update eoa activity last block processed: %w", err)
 	}

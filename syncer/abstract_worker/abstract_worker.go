@@ -114,7 +114,7 @@ func NewAbstractWorker(
 		doneCh:          doneCh,
 		errCh:           errCh,
 		processInterval: 2000,
-		id:              fmt.Sprintf("%x", rand.Uint64()),
+		id:              fmt.Sprintf("%x", rand.Uint64()), //nolint:gosec
 		workerType:      "abtract",
 	}
 
@@ -213,7 +213,7 @@ func (w *AbstractWorker) shutDown(err error) {
 func (w *AbstractWorker) log(str string, args ...any) {
 	if w.logger != nil {
 		w.logger.Log(fmt.Sprintf("%s [%s worker - %v] %s",
-			time.Now().Format("15:04:05.000"),
+			time.Now().UTC().Format("15:04:05.000"),
 			w.workerType,
 			w.id,
 			fmt.Sprintf(str, args...)))

@@ -62,7 +62,8 @@ func runAPI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("postgres: %w", err)
 	}
-	defer db.Close()
+
+	defer db.Close() //nolint:errcheck
 
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("db ping: %w", err)
@@ -89,7 +90,8 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		DB:             db,
 		AdminAPISecret: adminSecret,
 	})
+
 	log.Printf("explorer API listening on %s (POST / JSON-RPC; GET / metadata — polygon-edge compatible)", apiListen)
 
-	return http.ListenAndServe(apiListen, srv.Handler())
+	return http.ListenAndServe(apiListen, srv.Handler()) //nolint:gosec
 }
