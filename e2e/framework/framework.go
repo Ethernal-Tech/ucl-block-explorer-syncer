@@ -243,7 +243,7 @@ func (ts *TestSyncer) StartUCL() {
 		ts.t.Fatalf("failed to create edge log file: %v", err)
 	}
 
-	args := append([]string{"scripts/cluster", "ibft"}, ts.Config.EdgeFlags...)
+	args := append([]string{ts.Config.EdgeScript, "ibft"}, ts.Config.EdgeFlags...)
 	ts.edgeCmd = exec.Command("bash", args...) //nolint:gosec
 	ts.edgeCmd.Dir = "../ucl"
 	ts.edgeCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

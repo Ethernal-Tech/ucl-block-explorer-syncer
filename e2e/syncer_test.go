@@ -11,7 +11,7 @@ import (
 )
 
 func TestSyncerBasic(t *testing.T) {
-	ts := framework.NewTestSyncer(t, framework.WithLogging())
+	ts := framework.NewTestSyncer(t, framework.WithLogging(), framework.WithEdgeFlags("write-logs", "--premine", "0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0"))
 	defer ts.Stop()
 
 	// 1. Start postgres
