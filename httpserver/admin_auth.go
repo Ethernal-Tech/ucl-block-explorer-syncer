@@ -12,7 +12,7 @@ import (
 
 type loginRequest struct {
 	Username string `json:"username"`
-	Password string `json:"password"`
+	Password string `json:"password"` //nolint:gosec // G117: intentional password field in auth request DTO
 }
 
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {

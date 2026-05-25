@@ -13,7 +13,7 @@ import (
 
 type adminUserRequest struct {
 	Username        string `json:"username"`
-	Password        string `json:"password,omitempty"`
+	Password        string `json:"password,omitempty"` //nolint:gosec // G117: intentional password field in auth request DTO
 	CurrentPassword string `json:"currentPassword"`
 }
 
