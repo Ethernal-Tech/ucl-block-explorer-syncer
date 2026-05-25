@@ -22,19 +22,6 @@ type assetIssuerRequest struct {
 func (s *Server) handleAdminAssetIssuers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	if s.cfg.AdminAPISecret == "" {
-		writeError(w, http.StatusNotFound, adminAPIDisabled)
-
-		return
-	}
-
-	token := parseBearerToken(r)
-	if token == "" || !constantTimeEqualString(token, s.cfg.AdminAPISecret) {
-		writeError(w, http.StatusUnauthorized, unauthorized)
-
-		return
-	}
-
 	if s.cfg.DB == nil {
 		writeError(w, http.StatusServiceUnavailable, dbNotConfigured)
 

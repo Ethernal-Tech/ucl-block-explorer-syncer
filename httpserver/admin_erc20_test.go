@@ -1,62 +1,141 @@
 package httpserver
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/alexedwards/scs/v2"
 )
 
-func TestParseBearerToken(t *testing.T) {
+func TestHandleAdminErc20Watchlist_InvalidMethod(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest("POST", "/", nil)
-
-	req.Header.Set("Authorization", "Bearer secret-token")
-
-	if got := parseBearerToken(req); got != "secret-token" {
-		t.Fatalf("got %q", got)
+	sm := scs.New()
+	s := &Server{
+		cfg:            Config{AdminAPISecret: secretStr},
+		sessionManager: sm,
 	}
 
-	req.Header.Set("Authorization", "bearer lower")
-
-	if got := parseBearerToken(req); got != "lower" {
-		t.Fatalf("case: got %q", got)
-	}
-
-	req.Header.Set("Authorization", "Basic x")
-
-	if got := parseBearerToken(req); got != "" {
-		t.Fatalf("wrong scheme: got %q", got)
-	}
-}
-
-func TestConstantTimeEqualString(t *testing.T) {
-	t.Parallel()
-
-	if !constantTimeEqualString("a", "a") {
-		t.Fatal("equal strings")
-	}
-
-	if constantTimeEqualString("a", "b") {
-		t.Fatal("different strings")
-	}
-
-	if constantTimeEqualString("a", "aa") {
-		t.Fatal("different lengths")
-	}
-}
-
-func TestHandleAdminErc20Watchlist_NoSecret(t *testing.T) {
-	t.Parallel()
-
-	s := &Server{cfg: Config{AdminAPISecret: ""}}
+	handler := sm.LoadAndSave(s.requireAdmin(s.handleAdminErc20Watchlist))
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/admin/v1/erc20/watchlist", strings.NewReader(`{}`))
+	req := httptest.NewRequest("GET", "/admin/v1/erc20/watchlist", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(rec, req)
 
-	s.handleAdminErc20Watchlist(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+}
 
-	if rec.Code != 404 {
-		t.Fatalf("status %d", rec.Code)
+func TestHandleAdminErc20Watchlist_NoDB(t *testing.T) {
+	t.Parallel()
+
+	sm := scs.New()
+	s := &Server{
+		cfg:            Config{AdminAPISecret: secretStr, DB: nil},
+		sessionManager: sm,
+	}
+
+	handler := sm.LoadAndSave(s.requireAdmin(s.handleAdminErc20Watchlist))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/admin/v1/erc20/watchlist",
+		strings.NewReader(`{"address":"0x0000000000000000000000000000000000000001"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
+	}
+}
+
+func TestHandleAdminErc20Watchlist_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer db.Close()
+
+	sm := scs.New()
+	s := &Server{
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
+		sessionManager: sm,
+	}
+
+	handler := sm.LoadAndSave(s.requireAdmin(s.handleAdminErc20Watchlist))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/admin/v1/erc20/watchlist",
+		strings.NewReader(`not json`))
+	req.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAdminErc20Watchlist_InvalidAddress(t *testing.T) {
+	t.Parallel()
+
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer db.Close()
+
+	sm := scs.New()
+	s := &Server{
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
+		sessionManager: sm,
+	}
+
+	handler := sm.LoadAndSave(s.requireAdmin(s.handleAdminErc20Watchlist))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/admin/v1/erc20/watchlist",
+		strings.NewReader(`{"address":"not-an-address"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleAdminErc20Watchlist_SymbolTooLong(t *testing.T) {
+	t.Parallel()
+
+	db, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defer db.Close()
+
+	sm := scs.New()
+	s := &Server{
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
+		sessionManager: sm,
+	}
+
+	handler := sm.LoadAndSave(s.requireAdmin(s.handleAdminErc20Watchlist))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/admin/v1/erc20/watchlist",
+		strings.NewReader(`{"address":"0x0000000000000000000000000000000000000001","symbol":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
 	}
 }
