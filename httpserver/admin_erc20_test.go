@@ -12,9 +12,10 @@ import (
 
 func TestHandleAdminErc20Watchlist_InvalidMethod(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -32,9 +33,10 @@ func TestHandleAdminErc20Watchlist_InvalidMethod(t *testing.T) {
 
 func TestHandleAdminErc20Watchlist_NoDB(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: nil},
+		cfg:            Config{AdminAPISecret: secretStr, DB: nil},
 		sessionManager: sm,
 	}
 
@@ -53,15 +55,17 @@ func TestHandleAdminErc20Watchlist_NoDB(t *testing.T) {
 
 func TestHandleAdminErc20Watchlist_InvalidJSON(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer db.Close()
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 
@@ -80,15 +84,17 @@ func TestHandleAdminErc20Watchlist_InvalidJSON(t *testing.T) {
 
 func TestHandleAdminErc20Watchlist_InvalidAddress(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer db.Close()
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 
@@ -107,15 +113,17 @@ func TestHandleAdminErc20Watchlist_InvalidAddress(t *testing.T) {
 
 func TestHandleAdminErc20Watchlist_SymbolTooLong(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer db.Close()
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 

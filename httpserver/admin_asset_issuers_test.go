@@ -12,9 +12,10 @@ import (
 
 func TestHandleCreateAssetIssuer_EmptyName(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -36,9 +37,10 @@ func TestHandleCreateAssetIssuer_EmptyName(t *testing.T) {
 
 func TestHandleCreateAssetIssuer_InvalidJSON(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -60,9 +62,10 @@ func TestHandleCreateAssetIssuer_InvalidJSON(t *testing.T) {
 
 func TestHandleAdminAssetIssuers_NoDB(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: nil},
+		cfg:            Config{AdminAPISecret: secretStr, DB: nil},
 		sessionManager: sm,
 	}
 
@@ -81,15 +84,17 @@ func TestHandleAdminAssetIssuers_NoDB(t *testing.T) {
 
 func TestHandleAdminAssetIssuers_DeleteNoID(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer db.Close()
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 
@@ -107,6 +112,7 @@ func TestHandleAdminAssetIssuers_DeleteNoID(t *testing.T) {
 
 func TestHandleAdminAssetIssuers_PutNoID(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +121,7 @@ func TestHandleAdminAssetIssuers_PutNoID(t *testing.T) {
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 

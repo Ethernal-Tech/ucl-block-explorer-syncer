@@ -84,6 +84,7 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		if err := api_storage.CrateAdminUser(seedAdminUser, seedAdminPass); err != nil {
 			return fmt.Errorf("seed admin: %w", err)
 		}
+
 		log.Printf("admin user '%s' created/updated", seedAdminUser)
 	}
 

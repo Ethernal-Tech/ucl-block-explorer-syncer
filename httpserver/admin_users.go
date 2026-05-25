@@ -3,6 +3,7 @@ package httpserver
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -31,64 +32,67 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		s.handleCreateAdminUser(w, r)
 	case http.MethodPut:
 		if id == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "ID required in path"})
+			writeError(w, http.StatusBadRequest, "ID required in path")
+
 			return
 		}
+
 		s.handleUpdateAdminUser(w, r, id)
 	case http.MethodDelete:
 		if id == "" {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "ID required in path"})
+			writeError(w, http.StatusBadRequest, "ID required in path")
+
 			return
 		}
+
 		s.handleDeleteAdminUser(w, r, id)
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		writeError(w, http.StatusMethodNotAllowed, methodNotAllowed)
 	}
 }
 
 func (s *Server) handleListAdminUsers(w http.ResponseWriter) {
 	resp, err := api_storage.GetAdminUserList()
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "database error"})
+		writeError(w, http.StatusInternalServerError, dbError)
+
 		return
 	}
+
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleCreateAdminUser(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxAdminJSONBody))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid body"})
+		writeError(w, http.StatusBadRequest, invalidBody)
+
 		return
 	}
 
 	var req adminUserRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+		writeError(w, http.StatusBadRequest, invalidJSON)
+
 		return
 	}
 
 	username := strings.TrimSpace(req.Username)
 	if username == "" || req.Password == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "username and password required"})
+		writeError(w, http.StatusBadRequest, "username and password required")
+
 		return
 	}
 
 	if err := api_storage.CrateAdminUser(username, req.Password); err != nil {
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "username already exists"})
+			writeError(w, http.StatusConflict, "username already exists")
+
 			return
 		}
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "database error"})
+
+		writeError(w, http.StatusInternalServerError, dbError)
+
 		return
 	}
 
@@ -99,45 +103,48 @@ func (s *Server) handleCreateAdminUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request, id string) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxAdminJSONBody))
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid body"})
+		writeError(w, http.StatusBadRequest, invalidBody)
+
 		return
 	}
 
 	var req adminUserRequest
+
 	if err := json.Unmarshal(body, &req); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+		writeError(w, http.StatusBadRequest, invalidJSON)
+
 		return
 	}
 
 	username := strings.TrimSpace(req.Username)
 	if username == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "username required"})
+		writeError(w, http.StatusBadRequest, "username required")
+
 		return
 	}
 
 	if req.CurrentPassword == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "currentPassword required"})
+		writeError(w, http.StatusBadRequest, "currentPasword required")
+
 		return
 	}
 
 	err = api_storage.UpdateAdminUser(id, username, req.CurrentPassword, req.Password)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "user not found"})
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "user not found")
+
 			return
 		}
+
 		if strings.Contains(err.Error(), "current password is incorrect") {
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "current password is incorrect"})
+			writeError(w, http.StatusUnauthorized, "current password is incorrect")
+
 			return
 		}
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "database error"})
+
+		writeError(w, http.StatusInternalServerError, dbError)
+
 		return
 	}
 
@@ -147,30 +154,35 @@ func (s *Server) handleUpdateAdminUser(w http.ResponseWriter, r *http.Request, i
 func (s *Server) handleDeleteAdminUser(w http.ResponseWriter, r *http.Request, id string) {
 	// Prevent deleting yourself
 	currentUser := s.sessionManager.GetString(r.Context(), "username")
+
 	var targetUsername string
+
 	if resp, err := api_storage.GetAdminUserList(); err == nil {
 		for _, u := range resp.Data {
 			if u.ID == id {
 				targetUsername = u.Username
+
 				break
 			}
 		}
 	}
+
 	if currentUser != "" && currentUser == targetUsername {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "cannot delete yourself"})
+		writeError(w, http.StatusBadRequest, "cannot delete yourself")
+
 		return
 	}
 
 	err := api_storage.DeleteAdminUser(id)
-	if err == sql.ErrNoRows {
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not found")
+
 		return
 	}
+
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "database error"})
+		writeError(w, http.StatusInternalServerError, dbError)
+
 		return
 	}
 

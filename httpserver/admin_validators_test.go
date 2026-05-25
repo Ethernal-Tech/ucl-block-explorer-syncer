@@ -12,9 +12,10 @@ import (
 
 func TestHandleAdminValidators_NoDB(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: nil},
+		cfg:            Config{AdminAPISecret: secretStr, DB: nil},
 		sessionManager: sm,
 	}
 
@@ -33,6 +34,7 @@ func TestHandleAdminValidators_NoDB(t *testing.T) {
 
 func TestHandleAdminValidators_NoAddress(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +43,7 @@ func TestHandleAdminValidators_NoAddress(t *testing.T) {
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 
@@ -59,6 +61,7 @@ func TestHandleAdminValidators_NoAddress(t *testing.T) {
 
 func TestHandleAdminValidators_InvalidAddress(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +70,7 @@ func TestHandleAdminValidators_InvalidAddress(t *testing.T) {
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 
@@ -86,6 +89,7 @@ func TestHandleAdminValidators_InvalidAddress(t *testing.T) {
 
 func TestHandleAdminValidators_InvalidMethod(t *testing.T) {
 	t.Parallel()
+
 	db, _, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +98,7 @@ func TestHandleAdminValidators_InvalidMethod(t *testing.T) {
 
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret", DB: db},
+		cfg:            Config{AdminAPISecret: secretStr, DB: db},
 		sessionManager: sm,
 	}
 
@@ -112,9 +116,10 @@ func TestHandleAdminValidators_InvalidMethod(t *testing.T) {
 
 func TestHandleUpsertValidator_InvalidJSON(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 

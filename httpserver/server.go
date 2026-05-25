@@ -167,6 +167,7 @@ func middlewareFactory() func(http.Handler) http.Handler {
 			} else {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 			}
+
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers",

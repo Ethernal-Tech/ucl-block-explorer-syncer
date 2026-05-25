@@ -11,16 +11,22 @@ import (
 
 func TestParseBearerToken(t *testing.T) {
 	t.Parallel()
+
 	req := httptest.NewRequest("POST", "/", nil)
 	req.Header.Set("Authorization", "Bearer secret-token")
+
 	if got := parseBearerToken(req); got != "secret-token" {
 		t.Fatalf("got %q", got)
 	}
+
 	req.Header.Set("Authorization", "bearer lower")
+
 	if got := parseBearerToken(req); got != "lower" {
 		t.Fatalf("case: got %q", got)
 	}
+
 	req.Header.Set("Authorization", "Basic x")
+
 	if got := parseBearerToken(req); got != "" {
 		t.Fatalf("wrong scheme: got %q", got)
 	}
@@ -28,12 +34,15 @@ func TestParseBearerToken(t *testing.T) {
 
 func TestConstantTimeEqualString(t *testing.T) {
 	t.Parallel()
+
 	if !constantTimeEqualString("a", "a") {
 		t.Fatal("equal strings")
 	}
+
 	if constantTimeEqualString("a", "b") {
 		t.Fatal("different strings")
 	}
+
 	if constantTimeEqualString("a", "aa") {
 		t.Fatal("different lengths")
 	}
@@ -41,6 +50,7 @@ func TestConstantTimeEqualString(t *testing.T) {
 
 func TestHandleAdminErc20Watchlist_NoSecret(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
 		cfg:            Config{AdminAPISecret: ""},
@@ -60,6 +70,7 @@ func TestHandleAdminErc20Watchlist_NoSecret(t *testing.T) {
 
 func TestRequireAdmin_NoSecret(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
 		cfg:            Config{AdminAPISecret: ""},
@@ -83,6 +94,7 @@ func TestRequireAdmin_NoSecret(t *testing.T) {
 
 func TestRequireAdmin_WrongBearer(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
 		cfg:            Config{AdminAPISecret: "correct-secret"},
@@ -107,6 +119,7 @@ func TestRequireAdmin_WrongBearer(t *testing.T) {
 
 func TestRequireAdmin_ValidBearer(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
 		cfg:            Config{AdminAPISecret: "my-secret"},
@@ -131,6 +144,7 @@ func TestRequireAdmin_ValidBearer(t *testing.T) {
 
 func TestRequireAdmin_NoBearer_NoSession(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
 		cfg:            Config{AdminAPISecret: "my-secret"},

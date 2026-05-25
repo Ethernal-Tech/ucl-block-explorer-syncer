@@ -11,9 +11,10 @@ import (
 
 func TestHandleAdminUsers_InvalidMethod(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -31,9 +32,10 @@ func TestHandleAdminUsers_InvalidMethod(t *testing.T) {
 
 func TestHandleAdminUsers_PutNoID(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -51,9 +53,10 @@ func TestHandleAdminUsers_PutNoID(t *testing.T) {
 
 func TestHandleAdminUsers_DeleteNoID(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -71,9 +74,10 @@ func TestHandleAdminUsers_DeleteNoID(t *testing.T) {
 
 func TestHandleCreateAdminUser_EmptyUsername(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -94,9 +98,10 @@ func TestHandleCreateAdminUser_EmptyUsername(t *testing.T) {
 
 func TestHandleCreateAdminUser_EmptyPassword(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -117,9 +122,10 @@ func TestHandleCreateAdminUser_EmptyPassword(t *testing.T) {
 
 func TestHandleCreateAdminUser_InvalidJSON(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -140,9 +146,10 @@ func TestHandleCreateAdminUser_InvalidJSON(t *testing.T) {
 
 func TestHandleUpdateAdminUser_EmptyUsername(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -163,9 +170,10 @@ func TestHandleUpdateAdminUser_EmptyUsername(t *testing.T) {
 
 func TestHandleUpdateAdminUser_NoCurrentPassword(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 
@@ -186,9 +194,10 @@ func TestHandleUpdateAdminUser_NoCurrentPassword(t *testing.T) {
 
 func TestHandleUpdateAdminUser_InvalidJSON(t *testing.T) {
 	t.Parallel()
+
 	sm := scs.New()
 	s := &Server{
-		cfg:            Config{AdminAPISecret: "secret"},
+		cfg:            Config{AdminAPISecret: secretStr},
 		sessionManager: sm,
 	}
 

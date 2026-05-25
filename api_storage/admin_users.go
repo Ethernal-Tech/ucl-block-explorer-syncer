@@ -39,6 +39,7 @@ func AuthenticateAdmin(username, password string) (bool, error) {
 	}
 
 	var hash string
+
 	err := conn.QueryRow(
 		`SELECT password_hash FROM chain.admin_users WHERE username = $1`,
 		username,
@@ -80,14 +81,17 @@ func GetAdminUserList() (*AdminUserListResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 
 	var list []AdminUser
+
 	for rows.Next() {
 		var u AdminUser
+
 		if err := rows.Scan(&u.ID, &u.Username, &u.CreatedAt); err != nil {
 			return nil, err
 		}
+
 		list = append(list, u)
 	}
 
@@ -106,6 +110,7 @@ func UpdateAdminUser(id, username, currentPassword, newPassword string) error {
 
 	// Verify current password
 	var existingHash string
+
 	err := conn.QueryRow(
 		`SELECT password_hash FROM chain.admin_users WHERE id = $1`, id,
 	).Scan(&existingHash)
@@ -123,15 +128,18 @@ func UpdateAdminUser(id, username, currentPassword, newPassword string) error {
 		if err != nil {
 			return fmt.Errorf("hash password: %w", err)
 		}
+
 		_, err = conn.Exec(`
 			UPDATE chain.admin_users SET username = $1, password_hash = $2 WHERE id = $3
 		`, username, string(hash), id)
+
 		return err
 	}
 
 	_, err = conn.Exec(`
 		UPDATE chain.admin_users SET username = $1 WHERE id = $2
 	`, username, id)
+
 	return err
 }
 
@@ -145,9 +153,11 @@ func DeleteAdminUser(id string) error {
 	if err != nil {
 		return err
 	}
+
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
 		return sql.ErrNoRows
 	}
+
 	return nil
 }
