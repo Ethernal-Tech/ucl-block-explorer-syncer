@@ -145,6 +145,22 @@ func (d *DB) RemoveERC20FromWatchlist(address common.Address) {
 	}
 }
 
+func (d *DB) GetBlockTimestamp(ctx context.Context, t *testing.T, blockNumber uint64) uint64 {
+	t.Helper()
+
+	var timestamp uint64
+
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT timestamp FROM chain.blocks WHERE number = $1`,
+		blockNumber,
+	).Scan(&timestamp)
+	if err != nil {
+		t.Fatalf("failed to get timestamp for block %d: %v", blockNumber, err)
+	}
+
+	return timestamp
+}
+
 type HourlyStats struct {
 	TransferCount         int64
 	TransferVolumeRaw     *big.Int
@@ -270,8 +286,24 @@ func (d *DB) GetEOAParticipationStats(
 	return retMap
 }
 
-func (d *DB) GetLastProcessedBlock(t *testing.T) (*uint64, error) {
-	t.Helper()
+func (d *DB) GetERC20NextBlock(address common.Address) uint64 {
+	d.t.Helper()
+
+	var nextBlock uint64
+
+	err := d.conn.QueryRowContext(context.TODO(),
+		`SELECT next_block FROM chain.erc20_watchlist WHERE address = $1`,
+		address.Hex(),
+	).Scan(&nextBlock)
+	if err != nil {
+		d.t.Fatalf("failed to query last block: %s", err)
+	}
+
+	return nextBlock
+}
+
+func (d *DB) GetLastProcessedBlock() (*uint64, error) {
+	d.t.Helper()
 
 	var value string
 	err := d.conn.QueryRow(`
@@ -296,9 +328,8 @@ func (d *DB) GetLastProcessedBlock(t *testing.T) (*uint64, error) {
 
 func (d *DB) GetTransactionByHash(
 	ctx context.Context,
-	t *testing.T,
 	hash string) *types.Transaction {
-	t.Helper()
+	d.t.Helper()
 
 	var tx types.Transaction
 	var blockHash, toAddress, data, status *string
@@ -335,10 +366,12 @@ func (d *DB) GetTransactionByHash(
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			t.Fatalf("transaction not found in DB for hash: %s", hash)
+			d.t.Fatalf("transaction not found in DB for hash: %s", hash)
 			return nil
 		}
-		t.Fatalf("failed to query transaction by hash %s: %v", hash, err)
+
+		d.t.Fatalf("failed to query transaction by hash %s: %v", hash, err)
+
 		return nil
 	}
 
@@ -348,7 +381,7 @@ func (d *DB) GetTransactionByHash(
 	if valueStr != nil {
 		bi := new(big.Int)
 		if _, ok := bi.SetString(*valueStr, 10); !ok {
-			t.Fatalf("failed to parse value field")
+			d.t.Fatalf("failed to parse value field")
 		}
 
 		tx.Value = (*hexutil.Big)(bi)
@@ -357,8 +390,9 @@ func (d *DB) GetTransactionByHash(
 	if gasPriceStr != nil {
 		bi := new(big.Int)
 		if _, ok := bi.SetString(*gasPriceStr, 10); !ok {
-			t.Fatalf("failed to parse gas_price field")
+			d.t.Fatalf("failed to parse gas_price field")
 		}
+
 		tx.GasPrice = (*hexutil.Big)(bi)
 	}
 

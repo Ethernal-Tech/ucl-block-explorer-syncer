@@ -25,6 +25,7 @@ import (
 
 //go:embed erc20.bytecode
 var Erc20Bytecode string
+var Erc20ConstructorMintAmount, _ = new(big.Int).SetString("1000000000000000000000", 10)
 
 var nodesRpcPorts = []int{10002, 20002, 30002, 40002}
 
