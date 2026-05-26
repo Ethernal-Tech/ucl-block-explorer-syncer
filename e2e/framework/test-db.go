@@ -136,6 +136,15 @@ func (d *DB) AddERC20ToWatchlist(address common.Address) {
 	}
 }
 
+func (d *DB) RemoveERC20FromWatchlist(address common.Address) {
+	_, err := d.conn.Exec(`
+		UPDATE chain.erc20_watchlist SET enabled = false WHERE address = $1
+	`, address.Hex())
+	if err != nil {
+		d.t.Fatalf("failed to remove token from watchlist: %s", err)
+	}
+}
+
 type HourlyStats struct {
 	TransferCount         int64
 	TransferVolumeRaw     *big.Int
@@ -150,10 +159,7 @@ type HourlyStats struct {
 type TokenHourlyMap map[string]map[hexutil.Uint64]HourlyStats
 
 func (d *DB) GetERC20TokensHourlyStatsFromDB(
-	ctx context.Context,
-	t *testing.T) TokenHourlyMap {
-	t.Helper()
-
+	ctx context.Context) TokenHourlyMap {
 	query := `
 		SELECT 
 			token_address, hour_utc, transfer_count, transfer_volume_raw, 
@@ -164,7 +170,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 
 	rows, err := d.conn.QueryContext(ctx, query)
 	if err != nil {
-		t.Fatalf("failed to query: %s", err)
+		d.t.Fatalf("failed to query: %s", err)
 	}
 
 	defer rows.Close() //nolint:errcheck
@@ -192,7 +198,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 			&cumCircStr,
 		)
 		if err != nil {
-			t.Fatalf("failed to scan row: %s", err.Error())
+			d.t.Fatalf("failed to scan row: %s", err.Error())
 		}
 
 		stats.TransferVolumeRaw = new(big.Int)
@@ -217,7 +223,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 	}
 
 	if err = rows.Err(); err != nil {
-		t.Fatalf("failed to scan rows: %s", err.Error())
+		d.t.Fatalf("failed to scan rows: %s", err.Error())
 	}
 
 	return retMap
@@ -227,10 +233,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 type EOAActivityMap map[string][]hexutil.Uint64
 
 func (d *DB) GetEOAParticipationStats(
-	ctx context.Context,
-	t *testing.T) EOAActivityMap {
-	t.Helper()
-
+	ctx context.Context) EOAActivityMap {
 	query := `
 		SELECT hour_utc, address 
 		FROM chain.entity_hour_participation
@@ -238,7 +241,7 @@ func (d *DB) GetEOAParticipationStats(
 
 	rows, err := d.conn.QueryContext(ctx, query)
 	if err != nil {
-		t.Fatalf("failed to query: %s", err)
+		d.t.Fatalf("failed to query: %s", err)
 	}
 
 	defer rows.Close() //nolint:errcheck
@@ -252,7 +255,7 @@ func (d *DB) GetEOAParticipationStats(
 
 		err := rows.Scan(&hourUtc, &address)
 		if err != nil {
-			t.Fatalf("failed to scan row: %s", err.Error())
+			d.t.Fatalf("failed to scan row: %s", err.Error())
 		}
 
 		hourTimestamp := hexutil.Uint64(hourUtc.Unix())
@@ -261,7 +264,7 @@ func (d *DB) GetEOAParticipationStats(
 	}
 
 	if err = rows.Err(); err != nil {
-		t.Fatalf("failed to scan rows: %s", err.Error())
+		d.t.Fatalf("failed to scan rows: %s", err.Error())
 	}
 
 	return retMap
@@ -382,4 +385,28 @@ func (d *DB) GetTransactionByHash(
 	}
 
 	return &tx
+}
+
+func (d *DB) GetLastBlockNumber() uint64 {
+	var num uint64
+
+	err := d.conn.QueryRow("SELECT COALESCE(MAX(number), 0) FROM chain.blocks").Scan(&num)
+	if err != nil {
+		d.t.Fatalf("failed to query last block: %s", err)
+	}
+
+	return num
+}
+
+func (d *DB) GetTxCountAfterBlock(blockNumber uint64) uint64 {
+	var count uint64
+
+	err := d.conn.QueryRow(
+		"SELECT COUNT(*) FROM chain.transactions WHERE block_number > $1",
+		blockNumber).Scan(&count)
+	if err != nil {
+		d.t.Fatalf("failed to query tx count: %s", err)
+	}
+
+	return count
 }

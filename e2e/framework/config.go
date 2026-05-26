@@ -49,7 +49,6 @@ func DefaultFrameworkConfig() *TestClusterConfig {
 			Flags:     []string{"write-logs"},
 			UclScript: "scripts/cluster_syncer.sh",
 			Dir:       "../ucl",
-			RpcUrl:    "http://localhost:10002",
 		},
 		DB: DBConfig{
 			ComposeDir: "../docker/db",

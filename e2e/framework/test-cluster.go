@@ -68,6 +68,12 @@ func WithTxWorkers(workers uint64) Option {
 	}
 }
 
+func WithErc20StartFromTip() Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.Erc20StartFromTip = true
+	}
+}
+
 func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 	t.Helper()
 
@@ -100,25 +106,30 @@ func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 	return fw
 }
 
-func (fw *TestCluster) Start() {
-	fw.DB.Start()
-	fw.UCL.Start()
-	fw.Syncer.Start()
+func (tc *TestCluster) Start() {
+	tc.DB.Start()
+	tc.UCL.Start()
+	tc.Syncer.Start()
 }
 
-func (fw *TestCluster) Stop() {
-	fw.Syncer.Stop()
-	fw.UCL.Stop()
-	fw.DB.Stop()
+func (tc *TestCluster) Stop() {
+	tc.Syncer.Stop()
+	tc.UCL.Stop()
+	tc.DB.Stop()
 }
 
-func (fw *TestCluster) initLogsDir() {
-	dir := filepath.Join("../e2e-logs", fmt.Sprintf("%s-%d", fw.t.Name(), time.Now().UTC().UnixMilli()))
+func (tc *TestCluster) initLogsDir() {
+	dir := filepath.Join("../e2e-logs", fmt.Sprintf("%s-%d", tc.t.Name(), time.Now().UTC().UnixMilli()))
 
 	if err := os.MkdirAll(dir, 0750); err != nil {
-		fw.t.Fatalf("failed to create logs dir: %v", err)
+		tc.t.Fatalf("failed to create logs dir: %v", err)
 	}
 
-	fw.Config.LogsDir = dir
-	fw.t.Logf("logs dir: %s", dir)
+	tc.Config.LogsDir = dir
+	tc.t.Logf("logs dir: %s", dir)
+}
+
+func (tc *TestCluster) RestartSyncer(newRpcUrl string) {
+	tc.Syncer.config.RpcUrl = newRpcUrl
+	tc.Syncer.Start()
 }

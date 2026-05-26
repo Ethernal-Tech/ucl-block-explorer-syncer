@@ -5,9 +5,11 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +26,8 @@ import (
 //go:embed erc20.bytecode
 var Erc20Bytecode string
 
+var nodesRpcPorts = []int{10002, 20002, 30002, 40002}
+
 type UCL struct {
 	node    *node
 	config  UCLConfig
@@ -39,12 +43,18 @@ func NewUCL(t *testing.T, cfg UCLConfig, logsDir string) *UCL {
 }
 
 func (u *UCL) Start() {
+	u.t.Cleanup(func() {
+		u.Stop()
+	})
+
 	f, err := os.OpenFile(filepath.Join(u.logsDir, "ucl.log"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		u.t.Fatalf("failed to create ucl log file: %v", err)
 	}
 
 	args := append([]string{u.config.UclScript, "ibft"}, u.config.Flags...)
+
+	u.config.RpcUrl = u.NodeRpcUrl(0)
 
 	n, err := newNode("bash", args, f, u.config.Dir)
 	if err != nil {
@@ -79,6 +89,11 @@ func (u *UCL) Stop() {
 	case <-time.After(10 * time.Second):
 		syscall.Kill(-u.node.cmd.Process.Pid, syscall.SIGKILL) //nolint:errcheck
 	}
+
+	// kill any leftover node processes
+	for _, port := range nodesRpcPorts {
+		exec.Command("pkill", "-f", fmt.Sprintf("jsonrpc :%d", port)).Run() //nolint:gosec,errcheck
+	}
 }
 
 func (u *UCL) Client() *ethclient.Client {
@@ -87,6 +102,43 @@ func (u *UCL) Client() *ethclient.Client {
 
 func (u *UCL) IsRunning() bool {
 	return u.node != nil && u.node.cmd != nil
+}
+
+func (u *UCL) StopNode(index int) {
+	if index >= len(nodesRpcPorts) {
+		u.t.Fatalf("node index %d out of range (max %d)", index, len(nodesRpcPorts)-1)
+	}
+
+	cmd := exec.Command("pkill", "-f", fmt.Sprintf("jsonrpc :%d", nodesRpcPorts[index])) //nolint:gosec
+	if err := cmd.Run(); err != nil {
+		u.t.Logf("failed to stop node %d: %v", index, err)
+	}
+
+	u.t.Logf("stopped node %d (port %d)", index, nodesRpcPorts[index])
+}
+
+func (u *UCL) NodeRpcUrl(index int) string {
+	if index >= len(nodesRpcPorts) {
+		u.t.Fatalf("node index %d out of range (max %d)", index, len(nodesRpcPorts)-1)
+	}
+
+	return fmt.Sprintf("http://localhost:%d", nodesRpcPorts[index])
+}
+
+func (u *UCL) ChangeNodeRpcUrl(index int) {
+	url := u.NodeRpcUrl(index)
+	u.config.RpcUrl = url
+
+	if u.client != nil {
+		u.client.Close()
+	}
+
+	client, err := ethclient.Dial(url)
+	if err != nil {
+		u.t.Fatalf("failed to reconnect eth client: %v", err)
+	}
+
+	u.client = client
 }
 
 func (u *UCL) WaitForBlock(target uint64, timeout time.Duration) {
