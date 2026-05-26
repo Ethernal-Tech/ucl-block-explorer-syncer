@@ -202,7 +202,7 @@ func buildCirculationHourlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Ci
 		FROM generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour') AS h(hour_utc)
 		LEFT JOIN (
 			SELECT s.hour_utc,
-			       SUM(s.cumulative_circulation)::text AS total
+			       SUM(s.cumulative_circulation / (10::numeric ^ w.decimals))::text AS total
 			FROM chain.erc20_hourly_stats s
 			INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
 			WHERE w.enabled = true AND w.decimals IS NOT NULL
@@ -239,6 +239,7 @@ func buildCirculationHourlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Ci
 
 	return out, rows.Err()
 }
+
 func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20CirculationCumulativeRow, error) {
 	rows, err := conn.Query(`
 		SELECT d.day_utc,
@@ -247,11 +248,11 @@ func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Cir
 		LEFT JOIN (
 			SELECT DISTINCT ON (date_trunc('day', hour_utc, 'UTC'))
 				date_trunc('day', hour_utc, 'UTC')::timestamptz AS day_utc,
-				SUM(s.cumulative_circulation) OVER (PARTITION BY s.hour_utc)::text AS total
+				SUM(s.cumulative_circulation / (10::numeric ^ w.decimals)) OVER (PARTITION BY s.hour_utc)::text AS total
 			FROM chain.erc20_hourly_stats s
 			INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
 			WHERE w.enabled = true AND w.decimals IS NOT NULL
-			  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
+				AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
 			ORDER BY date_trunc('day', hour_utc, 'UTC'), hour_utc DESC
 		) data ON data.day_utc = d.day_utc
 		ORDER BY d.day_utc ASC
@@ -300,11 +301,11 @@ func buildCirculationMonthlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20C
 				hourly_total AS total
 			FROM (
 				SELECT s.hour_utc,
-				       SUM(s.cumulative_circulation)::text AS hourly_total
+					SUM(s.cumulative_circulation / (10::numeric ^ w.decimals))::text AS hourly_total
 				FROM chain.erc20_hourly_stats s
 				INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
 				WHERE w.enabled = true AND w.decimals IS NOT NULL
-				  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
+					AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
 				GROUP BY s.hour_utc
 			) hourly
 			ORDER BY date_trunc('month', hour_utc, 'UTC'), hour_utc DESC
