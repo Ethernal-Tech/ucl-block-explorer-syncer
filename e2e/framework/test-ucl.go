@@ -22,7 +22,7 @@ import (
 )
 
 //go:embed erc20.bytecode
-var erc20Bytecode string
+var Erc20Bytecode string
 
 type UCL struct {
 	node    *node
@@ -201,7 +201,7 @@ func (u *UCL) SendNativeTokens(privateKey string, to common.Address, amount *big
 }
 
 func (u *UCL) DeployERC20(privateKey string) *types.Receipt {
-	data, err := hex.DecodeString(strings.TrimPrefix(erc20Bytecode, "0x"))
+	data, err := hex.DecodeString(strings.TrimPrefix(Erc20Bytecode, "0x"))
 	if err != nil {
 		u.t.Fatalf("failed to decode bytecode: %s", err)
 	}

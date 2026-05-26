@@ -1,8 +1,13 @@
 package e2e
 
 import (
+	"context"
+	"crypto/ecdsa"
 	"database/sql"
+	"fmt"
 	"math/big"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 func TestSyncerBasic(t *testing.T) {
@@ -71,4 +78,138 @@ func TestERC20(t *testing.T) {
 	ts.UCL.SendNativeTokens(pk, common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"), big.NewInt(10))
 
 	t.Log("sent native tokens")
+}
+
+func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
+	run := func(t *testing.T, fullBlock bool) {
+		t.Helper()
+
+		const numAccounts = 51
+
+		keys := make([]*ecdsa.PrivateKey, numAccounts)
+		premineAddresses := make([]string, numAccounts)
+		receipts := make([]*types.Receipt, numAccounts)
+
+		for i := 0; i < numAccounts; i++ {
+			privateKey, err := crypto.GenerateKey()
+			if err != nil {
+				t.Fatalf("cannot generate private key: %v", err)
+			}
+
+			keys[i] = privateKey
+			premineAddresses[i] = crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
+		}
+
+		premineFlagValue := strings.Join(premineAddresses, ",")
+
+		uclFlags := []string{"write-logs", "--premine", premineFlagValue}
+		if fullBlock {
+			uclFlags = append(uclFlags, "--full-block")
+		}
+
+		ts := framework.NewTestCluster(t,
+			framework.WithLogging(),
+			framework.WithUclFlags(uclFlags...),
+		)
+
+		ts.Start()
+		defer ts.Stop()
+
+		amount := big.NewInt(10)
+
+		var wg sync.WaitGroup
+
+		for i := range numAccounts {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				var receipt *types.Receipt
+
+				if i == 50 {
+					receipt = ts.UCL.DeployERC20(
+						fmt.Sprintf("%x", crypto.FromECDSA(keys[i])))
+				} else {
+					receipt = ts.UCL.SendNativeTokens(
+						fmt.Sprintf("%x", crypto.FromECDSA(keys[i])),
+						common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"),
+						amount)
+				}
+
+				receipts[i] = receipt
+			}()
+		}
+
+		wg.Wait()
+
+		for _, receipt := range receipts {
+			if receipt.Status == 0 {
+				t.Logf("tx %v unsuccessfully executed", receipt.TxHash)
+			}
+		}
+
+		balance, err := ts.UCL.Client().BalanceAt(
+			context.TODO(),
+			common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"),
+			nil)
+		if err != nil {
+			t.Fatalf("cannot get balance: %v", err)
+		}
+
+		if balance.Uint64() != 500 {
+			t.Logf("incorrect balance")
+		}
+
+		var maxBlockNumber uint64 = 0
+		for _, receipt := range receipts {
+			if receipt.BlockNumber.Uint64() > maxBlockNumber {
+				maxBlockNumber = receipt.BlockNumber.Uint64()
+			}
+		}
+
+		t.Logf("waiting for syncer to process up to block %d...", maxBlockNumber)
+
+		synced := false
+
+		for i := 0; i < 30; i++ {
+			lastBlockPtr, err := ts.DB.GetLastProcessedBlock(t)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+
+			if lastBlockPtr != nil && *lastBlockPtr >= maxBlockNumber {
+				synced = true
+
+				break
+			}
+
+			time.Sleep(time.Second)
+		}
+
+		if !synced {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlockNumber)
+		}
+
+		for i := range numAccounts {
+			tx := ts.DB.GetTransactionByHash(
+				context.TODO(),
+				t,
+				receipts[i].TxHash.Hex())
+
+			if strings.ToLower(*tx.BlockHash) != strings.ToLower(receipts[i].BlockHash.Hex()) ||
+				(i < 50 && tx.Value.ToInt().Cmp(big.NewInt(10)) != 0) ||
+				(i == 50 && strings.TrimPrefix(tx.Input, "0x") != framework.Erc20Bytecode) {
+				t.Errorf("incorrectly indexed")
+			}
+		}
+	}
+
+	t.Run("WithFullBlock", func(t *testing.T) {
+		run(t, true)
+	})
+
+	t.Run("WithoutFullBlock", func(t *testing.T) {
+		run(t, false)
+	})
 }

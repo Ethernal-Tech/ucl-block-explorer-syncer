@@ -4,14 +4,17 @@ package framework
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
@@ -262,4 +265,121 @@ func (d *DB) GetEOAParticipationStats(
 	}
 
 	return retMap
+}
+
+func (d *DB) GetLastProcessedBlock(t *testing.T) (*uint64, error) {
+	t.Helper()
+
+	var value string
+	err := d.conn.QueryRow(`
+		SELECT value FROM chain.metadata WHERE key = 'txworker_last_block_processed'
+	`).Scan(&value)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("failed to query last block processed: %w", err)
+	}
+
+	number, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse block number '%s': %w", value, err)
+	}
+
+	return &number, nil
+}
+
+func (d *DB) GetTransactionByHash(
+	ctx context.Context,
+	t *testing.T,
+	hash string) *types.Transaction {
+	t.Helper()
+
+	var tx types.Transaction
+	var blockHash, toAddress, data, status *string
+	var blockNumber, blockTimestamp *uint64
+
+	var valueStr, gasPriceStr *string
+
+	query := `
+		SELECT 
+			hash, block_hash, block_number, from_address, to_address, 
+			value, nonce, gas_limit, gas_price, data, type, 
+			chain_id, status, block_timestamp 
+		FROM chain.transactions 
+		WHERE hash = $1 
+		LIMIT 1
+	`
+
+	err := d.conn.QueryRowContext(ctx, query, hash).Scan(
+		&tx.Hash,
+		&blockHash,
+		&blockNumber,
+		&tx.From,
+		&toAddress,
+		&valueStr,
+		&tx.Nonce,
+		&tx.Gas,
+		&gasPriceStr,
+		&data,
+		&tx.Type,
+		&tx.ChainID,
+		&status,
+		&blockTimestamp,
+	)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("transaction not found in DB for hash: %s", hash)
+			return nil
+		}
+		t.Fatalf("failed to query transaction by hash %s: %v", hash, err)
+		return nil
+	}
+
+	tx.To = toAddress
+	tx.BlockHash = blockHash
+
+	if valueStr != nil {
+		bi := new(big.Int)
+		if _, ok := bi.SetString(*valueStr, 10); !ok {
+			t.Fatalf("failed to parse value field")
+		}
+
+		tx.Value = (*hexutil.Big)(bi)
+	}
+
+	if gasPriceStr != nil {
+		bi := new(big.Int)
+		if _, ok := bi.SetString(*gasPriceStr, 10); !ok {
+			t.Fatalf("failed to parse gas_price field")
+		}
+		tx.GasPrice = (*hexutil.Big)(bi)
+	}
+
+	if data != nil {
+		tx.Input = *data
+	}
+
+	if status != nil {
+		if *status == "success" {
+			tx.Status = 1
+		} else {
+			tx.Status = 0
+		}
+	}
+
+	if blockNumber != nil {
+		hn := hexutil.Uint64(*blockNumber)
+		tx.BlockNumber = &hn
+	}
+
+	if blockTimestamp != nil {
+		ht := hexutil.Uint64(*blockTimestamp)
+		tx.BlockTimestamp = &ht
+	}
+
+	return &tx
 }
