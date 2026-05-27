@@ -300,6 +300,9 @@ func TestE2E_ERC20Stats(t *testing.T) {
 
 		ts.DB.AddERC20ToWatchlist(erc20)
 
+		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
+		time.Sleep(time.Second * 10)
+
 		t.Log("erc20 token added to watchlist, doing additional operations...")
 
 		mintReceipt2 := ts.UCL.MintERC20(pk, erc20, to, big.NewInt(2000000))
@@ -467,6 +470,319 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			}
 		}
 	}
+	t.Run("WithoutStartFromTip", func(t *testing.T) {
+		run(t, false)
+	})
+
+	t.Run("WithStartFromTip", func(t *testing.T) {
+		run(t, true)
+	})
+}
+
+func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
+	wait := func(t *testing.T, ts *framework.TestCluster, block uint64) {
+		synced := false
+
+		for i := 0; i < 30; i++ {
+			lastBlockPtr, err := ts.DB.GetLastProcessedBlock()
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+
+			if lastBlockPtr != nil && *lastBlockPtr > block {
+				synced = true
+
+				break
+			}
+
+			time.Sleep(time.Second)
+		}
+
+		if !synced {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", block)
+		}
+	}
+
+	waitERC20 := func(t *testing.T, ts *framework.TestCluster, address common.Address, maxBlock uint64) {
+		t.Helper()
+
+		for i := 0; i < 30; i++ {
+			nextBlock := ts.DB.GetERC20NextBlock(address)
+			if nextBlock > maxBlock {
+				return
+			}
+
+			time.Sleep(time.Second)
+		}
+
+		t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
+	}
+
+	run := func(t *testing.T, startFromTip bool) {
+		t.Helper()
+
+		var (
+			// address: 0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0
+			pk = "0x84bbdf2654fd7d027a7cd71cd726dda7766c577407a80c0fbcb729845929311e"
+			to = common.HexToAddress("0xd0069BA916F87B24Df5Db1F53584F1809bc8B1bd")
+		)
+
+		uclFlags := []string{"write-logs", "--premine", "0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0"}
+
+		opts := []framework.Option{
+			framework.WithLogging(),
+			framework.WithErc20Stats(),
+			framework.WithUclFlags(uclFlags...),
+		}
+
+		if startFromTip {
+			opts = append(opts, framework.WithErc20StartFromTip())
+		}
+
+		ts := framework.NewTestCluster(t, opts...)
+
+		ts.Start()
+		defer ts.Stop()
+
+		deployReceipt := ts.UCL.DeployERC20(pk)
+		erc20 := deployReceipt.ContractAddress
+
+		type operation struct {
+			receipt   *types.Receipt
+			mintVol   *big.Int
+			burnVol   *big.Int
+			transfVol *big.Int
+			active    bool
+		}
+
+		wait(t, ts, deployReceipt.BlockNumber.Uint64())
+
+		allOperations := []operation{
+			{deployReceipt, framework.Erc20ConstructorMintAmount, nil, nil, false},
+		}
+
+		ts.DB.AddERC20ToWatchlist(erc20)
+
+		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
+		time.Sleep(time.Second * 10)
+
+		t.Log("erc20 token added to watchlist")
+
+		const (
+			mintAmount     = int64(2000000)
+			burnAmount     = int64(500000)
+			transferAmount = int64(300000)
+		)
+
+		doRound := func(active bool) {
+			mintReceipt := ts.UCL.MintERC20(pk, erc20, to, big.NewInt(mintAmount))
+			burnReceipt := ts.UCL.BurnERC20(pk, erc20, big.NewInt(burnAmount))
+			transferReceipt := ts.UCL.TransferERC20(pk, erc20, to, big.NewInt(transferAmount))
+
+			allOperations = append(allOperations,
+				operation{mintReceipt, big.NewInt(mintAmount), nil, nil, active},
+				operation{burnReceipt, nil, big.NewInt(burnAmount), nil, active},
+				operation{transferReceipt, nil, nil, big.NewInt(transferAmount), active},
+			)
+		}
+
+		doRound(true)
+
+		maxBlock := allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
+		waitERC20(t, ts, erc20, maxBlock)
+
+		ts.DB.RemoveERC20FromWatchlist(erc20)
+
+		// We need to wait a few seconds because syncer periodically checks watchlist. If we don't do so,
+		// it can happen that the next round occurs and ERC-20 token (from syncer's perspective) is still
+		// active.
+		time.Sleep(time.Second * 10)
+
+		t.Log("erc20 token removed from watchlist")
+
+		doRound(false)
+
+		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
+		wait(t, ts, maxBlock)
+
+		ts.DB.AddERC20ToWatchlist(erc20)
+
+		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
+		time.Sleep(time.Second * 10)
+
+		t.Log("erc20 token added to watchlist")
+
+		doRound(true)
+
+		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
+		waitERC20(t, ts, erc20, maxBlock)
+
+		ts.DB.RemoveERC20FromWatchlist(erc20)
+
+		// We need to wait a few seconds because syncer periodically checks watchlist. If we don't do so,
+		// it can happen that the next round occurs and ERC-20 token (from syncer's perspective) is still
+		// active.
+		time.Sleep(time.Second * 10)
+
+		t.Log("erc20 token removed from watchlist")
+
+		doRound(false)
+
+		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
+		wait(t, ts, maxBlock)
+
+		ts.DB.AddERC20ToWatchlist(erc20)
+
+		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
+		time.Sleep(time.Second * 10)
+
+		t.Log("erc20 token added to watchlist")
+
+		// Round 5: active
+		doRound(true)
+
+		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
+		waitERC20(t, ts, erc20, maxBlock)
+
+		maxBlockNumber := slices.Max(func() []uint64 {
+			blocks := make([]uint64, len(allOperations))
+			for i, operation := range allOperations {
+				blocks[i] = operation.receipt.BlockNumber.Uint64()
+			}
+
+			return blocks
+		}())
+
+		waitERC20(t, ts, erc20, maxBlockNumber)
+
+		ctx := context.TODO()
+
+		expected := map[hexutil.Uint64]framework.HourlyStats{}
+
+		for _, operation := range allOperations {
+			if startFromTip && !operation.active {
+				continue
+			}
+
+			timestamp := ts.DB.GetBlockTimestamp(ctx, t, operation.receipt.BlockNumber.Uint64())
+			hour := hexutil.Uint64(time.Unix(int64(timestamp), 0).UTC().Truncate(time.Hour).Unix())
+
+			stat, ok := expected[hour]
+			if !ok {
+				stat = framework.HourlyStats{
+					MintVolumeRaw:         new(big.Int),
+					BurnVolumeRaw:         new(big.Int),
+					TransferVolumeRaw:     new(big.Int),
+					CumulativeCirculation: new(big.Int),
+				}
+			}
+
+			if operation.mintVol != nil {
+				stat.MintCount++
+				stat.MintVolumeRaw.Add(stat.MintVolumeRaw, operation.mintVol)
+			}
+
+			if operation.burnVol != nil {
+				stat.BurnCount++
+				stat.BurnVolumeRaw.Add(stat.BurnVolumeRaw, operation.burnVol)
+			}
+
+			if operation.transfVol != nil {
+				stat.TransferCount++
+				stat.TransferVolumeRaw.Add(stat.TransferVolumeRaw, operation.transfVol)
+			}
+
+			expected[hour] = stat
+		}
+
+		hours := make([]hexutil.Uint64, 0, len(expected))
+		for hour := range expected {
+			hours = append(hours, hour)
+		}
+
+		slices.Sort(hours)
+
+		cumulative := new(big.Int)
+
+		for _, hour := range hours {
+			stat := expected[hour]
+
+			cumulative.Add(cumulative, stat.MintVolumeRaw)
+			cumulative.Sub(cumulative, stat.BurnVolumeRaw)
+
+			stat.CumulativeCirculation.Set(cumulative)
+			expected[hour] = stat
+		}
+
+		actual := ts.DB.GetERC20TokensHourlyStatsFromDB(ctx)
+
+		actualForToken, ok := actual[erc20.Hex()]
+		if !ok {
+			t.Fatalf("no hourly stats found in DB for token %s", erc20.Hex())
+		}
+
+		if len(actualForToken) != len(expected) {
+			t.Errorf("expected %d hour buckets, got %d", len(expected), len(actualForToken))
+		}
+
+		for _, hour := range hours {
+			exp := expected[hour]
+			got, ok := actualForToken[hour]
+			if !ok {
+				t.Fatalf("missing hour bucket %d in DB", hour)
+			}
+
+			if exp.MintCount != got.MintCount {
+				t.Fatalf("hour %d: mint count: expected %d, got %d",
+					hour,
+					exp.MintCount,
+					got.MintCount)
+			}
+
+			if exp.MintVolumeRaw.Cmp(got.MintVolumeRaw) != 0 {
+				t.Fatalf("hour %d: mint volume: expected %s, got %s",
+					hour,
+					exp.MintVolumeRaw,
+					got.MintVolumeRaw)
+			}
+
+			if exp.BurnCount != got.BurnCount {
+				t.Fatalf("hour %d: burn count: expected %d, got %d",
+					hour,
+					exp.BurnCount,
+					got.BurnCount)
+			}
+
+			if exp.BurnVolumeRaw.Cmp(got.BurnVolumeRaw) != 0 {
+				t.Fatalf("hour %d: burn volume: expected %s, got %s",
+					hour,
+					exp.BurnVolumeRaw,
+					got.BurnVolumeRaw)
+			}
+
+			if exp.TransferCount != got.TransferCount {
+				t.Fatalf("hour %d: transfer count: expected %d, got %d",
+					hour,
+					exp.TransferCount,
+					got.TransferCount)
+			}
+
+			if exp.TransferVolumeRaw.Cmp(got.TransferVolumeRaw) != 0 {
+				t.Fatalf("hour %d: transfer volume: expected %s, got %s",
+					hour,
+					exp.TransferVolumeRaw,
+					got.TransferVolumeRaw)
+			}
+
+			if exp.CumulativeCirculation.Cmp(got.CumulativeCirculation) != 0 {
+				t.Fatalf("hour %d: cumulative circulation: expected %s, got %s",
+					hour,
+					exp.CumulativeCirculation,
+					got.CumulativeCirculation)
+			}
+		}
+	}
+
 	t.Run("WithoutStartFromTip", func(t *testing.T) {
 		run(t, false)
 	})
