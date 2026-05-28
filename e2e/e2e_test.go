@@ -791,3 +791,181 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		run(t, true)
 	})
 }
+
+func TestE2E_EOAActivity(t *testing.T) {
+	wait := func(t *testing.T, ts *framework.TestCluster, block uint64) {
+		synced := false
+
+		for i := 0; i < 30; i++ {
+			lastBlockPtr, err := ts.DB.GetLastProcessedERC20Block()
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+
+			if lastBlockPtr != nil && *lastBlockPtr > block {
+				synced = true
+
+				break
+			}
+
+			time.Sleep(time.Second)
+		}
+
+		if !synced {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", block)
+		}
+	}
+
+	const (
+		// address: 0xBE86bF02f6acCBa65Cd082F77E3c319Bf3Cd5231
+		pk1 = "0x6422b764169ac95760e9197a09e04a04a06984c5e40a5873ae7c89e748fdf255"
+		// address: 0x4EF5e1BB5fda02b9424B43fB0f9874edb719af56
+		pk2 = "0xc92cf8f6fa9e42f0fecfd5809ee3712a8569fba8753a8f531596b8e6c903d54c"
+		// address: 0x4b6409e82B1cee9210C98816677358F32e81c848
+		pk3 = "0xdb3e2f88ad38e12c58dc3dc0ad35fde3fe2663deb7b66ec9816bc3752e73145a"
+		// address: 0xaC2497E9743BD97E699b7856e90DcFB67E0a543b
+		pk4 = "0x3528e9a7674a730ef87fa0bafc94853fca3bfef085cd2d8eabe395b0b461779e"
+	)
+
+	var (
+		addr1     = common.HexToAddress("0xBE86bF02f6acCBa65Cd082F77E3c319Bf3Cd5231")
+		addr2     = common.HexToAddress("0x4EF5e1BB5fda02b9424B43fB0f9874edb719af56")
+		addr3     = common.HexToAddress("0x4b6409e82B1cee9210C98816677358F32e81c848")
+		addr4     = common.HexToAddress("0xaC2497E9743BD97E699b7856e90DcFB67E0a543b")
+		addr5     = common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D")
+		notInList = common.HexToAddress("0xe332ebED135a6e532722056A9e6f8958e7A9E1C3")
+	)
+
+	ts := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithEoaActivity(),
+		framework.WithUclFlags(
+			"write-logs",
+			"--premine", strings.Join([]string{addr1.Hex(), addr2.Hex(), addr3.Hex(), addr4.Hex()}, ","),
+		),
+	)
+
+	ts.DB.Start()
+	ts.UCL.Start()
+
+	defer ts.Stop()
+
+	// Phase 1: do some txs before syncer starts.
+	transfer1Receipt := ts.UCL.SendNativeTokens(pk1, addr5, big.NewInt(100))
+	transfer2Receipt := ts.UCL.SendNativeTokens(pk2, addr5, big.NewInt(200))
+	deployReceipt := ts.UCL.DeployERC20(pk3)
+	erc20 := deployReceipt.ContractAddress
+	mint1Receipt := ts.UCL.MintERC20(pk3, erc20, addr4, big.NewInt(1000000))
+	mint2Receipt := ts.UCL.MintERC20(pk3, erc20, notInList, big.NewInt(1000000))
+	transferToken1Receipt := ts.UCL.TransferERC20(pk4, erc20, addr5, big.NewInt(100000))
+
+	ts.Syncer.Start()
+
+	t.Logf("start syncer")
+
+	// private key: 0xcdd3bb3974f79ba5268b6b6a01082af26fd6f5a3dd8fba5975b7cc11f7fa8a56
+	newAddr := common.HexToAddress("0x9A20DC76A4f687C7CEeb5b9b31c4693634D007c7")
+
+	// Phase 2: more txs using both old and new addresses.
+	transfer4Receipt := ts.UCL.SendNativeTokens(pk1, newAddr, big.NewInt(50))
+	mint3Receipt := ts.UCL.MintERC20(pk3, erc20, addr3, big.NewInt(500000))
+
+	phase2Receipts := []*types.Receipt{
+		transfer4Receipt,
+		mint3Receipt,
+	}
+
+	maxBlock := slices.Max(func() []uint64 {
+		blocks := make([]uint64, len(phase2Receipts))
+
+		for i, r := range phase2Receipts {
+			blocks[i] = r.BlockNumber.Uint64()
+		}
+
+		return blocks
+	}())
+
+	t.Logf("waiting for syncer to process up to block %d...", maxBlock)
+
+	wait(t, ts, maxBlock)
+
+	ctx := context.TODO()
+
+	type activity struct {
+		receipt *types.Receipt
+		addrs   []common.Address
+	}
+
+	allActivity := []activity{
+		{transfer1Receipt, []common.Address{addr1, addr5}},
+		{transfer2Receipt, []common.Address{addr2, addr5}},
+		{deployReceipt, []common.Address{addr3}},
+		{mint1Receipt, []common.Address{addr3}},
+		{mint2Receipt, []common.Address{addr3}},
+		{transferToken1Receipt, []common.Address{addr4}},
+		{transfer4Receipt, []common.Address{addr1, newAddr}},
+		{mint3Receipt, []common.Address{addr3}},
+	}
+
+	expected := map[string]map[hexutil.Uint64]struct{}{}
+
+	for _, a := range allActivity {
+		timestamp := ts.DB.GetBlockTimestamp(ctx, t, a.receipt.BlockNumber.Uint64())
+		hour := hexutil.Uint64(time.Unix(int64(timestamp), 0).UTC().Truncate(time.Hour).Unix())
+
+		for _, addr := range a.addrs {
+			key := addr.Hex()
+			if _, ok := expected[key]; !ok {
+				expected[key] = map[hexutil.Uint64]struct{}{}
+			}
+
+			expected[key][hour] = struct{}{}
+		}
+	}
+
+	actual := ts.DB.GetEOAParticipationStats(ctx)
+
+	if len(actual) != len(expected) {
+		t.Errorf("expected %d addresses, got %d", len(expected), len(actual))
+	}
+
+	if _, ok := actual[notInList.Hex()]; ok {
+		t.Errorf("unexpected %d addresses", notInList)
+	}
+
+	for addr, hours := range expected {
+		actualHours, ok := actual[addr]
+		if !ok {
+			t.Fatalf("no activity found in DB for address %s", addr)
+		}
+
+		actualHourSet := map[hexutil.Uint64]struct{}{}
+		for _, h := range actualHours {
+			actualHourSet[h] = struct{}{}
+		}
+
+		if len(actualHourSet) != len(hours) {
+			t.Errorf("address %s: expected %d hour buckets, got %d", addr, len(hours), len(actualHourSet))
+		}
+
+		for hour := range hours {
+			if _, ok := actualHourSet[hour]; !ok {
+				t.Errorf("address %s: missing hour %d in DB", addr, hour)
+			}
+		}
+	}
+
+	for addr, actualHours := range actual {
+		expectedHours, ok := expected[addr]
+		if !ok {
+			t.Errorf("unexpected address %s found in DB with hours %v", addr, actualHours)
+			continue
+		}
+
+		for _, h := range actualHours {
+			if _, ok := expectedHours[h]; !ok {
+				t.Errorf("address %s: unexpected hour %d found in DB", addr, h)
+			}
+		}
+	}
+}

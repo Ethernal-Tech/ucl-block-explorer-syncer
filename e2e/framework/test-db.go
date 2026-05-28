@@ -326,6 +326,30 @@ func (d *DB) GetLastProcessedBlock() (*uint64, error) {
 	return &number, nil
 }
 
+func (d *DB) GetLastProcessedERC20Block() (*uint64, error) {
+	d.t.Helper()
+
+	var value string
+	err := d.conn.QueryRow(`
+		SELECT value FROM chain.metadata WHERE key = 'eoa_activity_last_block_processed'
+	`).Scan(&value)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("failed to query last block processed: %w", err)
+	}
+
+	number, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse block number '%s': %w", value, err)
+	}
+
+	return &number, nil
+}
+
 func (d *DB) GetTransactionByHash(
 	ctx context.Context,
 	hash string) *types.Transaction {
