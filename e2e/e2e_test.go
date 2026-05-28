@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"slices"
@@ -968,4 +969,393 @@ func TestE2E_EOAActivity(t *testing.T) {
 			}
 		}
 	}
+}
+func TestE2E_SyncerNodeFailover(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	testCluster := framework.NewTestCluster(
+		t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+
+	defer testCluster.Stop()
+
+	testCluster.Start()
+
+	// let syncer index some blocks
+	time.Sleep(15 * time.Second)
+
+	blocksBefore := testCluster.DB.GetBlockCount()
+	t.Logf("blocks before failover: %d", blocksBefore)
+
+	if blocksBefore == 0 {
+		t.Fatal("syncer did not index any blocs")
+	}
+
+	lastBlock := testCluster.DB.GetLastBlockNumber()
+	t.Logf("last indexed block: %d", lastBlock)
+
+	testCluster.UCL.StopNode(0)
+	t.Log("node 0 stopped")
+
+	testCluster.UCL.ChangeNodeRpcUrl(1)
+
+	time.Sleep(10 * time.Second)
+
+	testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000))
+	testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000))
+	t.Log("sent transactions while syncer was down")
+
+	testCluster.RestartSyncer(testCluster.UCL.NodeRpcUrl(1))
+	t.Log("syncer restarted on node 1")
+
+	time.Sleep(15 * time.Second)
+
+	blocksAfter := testCluster.DB.GetBlockCount()
+	t.Logf("blocks after failover: %d", blocksAfter)
+
+	if blocksAfter <= blocksBefore {
+		t.Fatalf("syncer did not index new blocks after failover: before=%d after=%d", blocksBefore, blocksAfter)
+	}
+
+	newLastBlock := testCluster.DB.GetLastBlockNumber()
+	t.Logf("new last indexed block %d", newLastBlock)
+
+	if newLastBlock <= lastBlock {
+		t.Fatalf("syncer did not advance: before=%d after=%d", lastBlock, newLastBlock)
+	}
+
+	txCount := testCluster.DB.GetTxCountAfterBlock(lastBlock)
+	t.Logf("transactions indexed after failover: %d", txCount)
+
+	if txCount < 2 {
+		t.Fatalf("expected at least 2 transactions after failover, got %d", txCount)
+	}
+}
+
+func TestE2E_ERC20StatsFailover(t *testing.T) {
+	run := func(t *testing.T, startFromTip bool) {
+		pkSender, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("failed to generate key: %v", err)
+		}
+
+		pkReceiver, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("failed to generate key: %v", err)
+		}
+
+		pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+		senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+		receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+		opts := []framework.Option{
+			framework.WithLogging(),
+			framework.WithFullBlock(),
+			framework.WithErc20Stats(),
+		}
+
+		if startFromTip {
+			opts = append(opts, framework.WithErc20StartFromTip())
+		}
+
+		opts = append(opts,
+			framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+
+		testCluster := framework.NewTestCluster(t, opts...)
+
+		defer testCluster.Stop()
+
+		testCluster.Start()
+
+		// deploy ERC20 and add to watchlist
+		deployReceipt := testCluster.UCL.DeployERC20(pkSenderStr)
+		if deployReceipt.Status != 1 {
+			t.Fatal("can't deploy contract")
+		}
+
+		erc20ContractAddr := deployReceipt.ContractAddress
+		t.Logf("erc20 deployed at %s", erc20ContractAddr.Hex())
+
+		if err := testCluster.DB.WaitForBlock(
+			deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+			t.Fatal("syncer can't get to deployment block")
+		}
+
+		testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr)
+
+		time.Sleep(10 * time.Second)
+
+		// initial mint before failover
+		mintReceipt := testCluster.UCL.MintERC20(
+			pkSenderStr,
+			erc20ContractAddr,
+			receiverAddress,
+			big.NewInt(1000000))
+
+		if err := testCluster.DB.WaitForERC20Block(
+			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+			t.Fatal("syncer can't get to frist mint block")
+		}
+
+		statsBefore := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO())
+
+		tokenStats, exist := statsBefore[erc20ContractAddr.Hex()]
+		if !exist {
+			t.Fatal("no erc20 stats found before failover")
+		}
+
+		var mintCountBefore int64
+
+		for _, s := range tokenStats {
+			mintCountBefore += s.MintCount
+		}
+
+		t.Logf("mint count before failover: %d", mintCountBefore)
+
+		if startFromTip {
+			testCluster.DB.RemoveERC20FromWatchlist(erc20ContractAddr)
+		}
+
+		// stop node - syncer should stop
+		testCluster.UCL.StopNode(0)
+		t.Log("node 0 stopped")
+
+		time.Sleep(10 * time.Second)
+
+		// failover UCL to node 1
+		testCluster.UCL.ChangeNodeRpcUrl(1)
+
+		// erc20 operations while syncer is down
+		testCluster.UCL.MintERC20(pkSenderStr, erc20ContractAddr, receiverAddress, big.NewInt(2000000))
+		testCluster.UCL.BurnERC20(pkSenderStr, erc20ContractAddr, big.NewInt(500000))
+		transferReceipt := testCluster.UCL.TransferERC20(pkSenderStr, erc20ContractAddr, receiverAddress, big.NewInt(100000))
+		t.Log("erc20 operations done while syncer was down")
+
+		// restart syncer on node 1
+		testCluster.RestartSyncer(testCluster.UCL.NodeRpcUrl(1))
+
+		if startFromTip {
+			if err := testCluster.DB.WaitForERC20Block(erc20ContractAddr,
+				transferReceipt.BlockNumber.Uint64(), 20*time.Second,
+			); err == nil || !strings.Contains(err.Error(), "timeout") {
+				t.Fatal("should't get erc 20 blocks")
+			}
+		} else {
+			if err := testCluster.DB.WaitForERC20Block(erc20ContractAddr,
+				transferReceipt.BlockNumber.Uint64(), 20*time.Second); err != nil {
+				t.Fatal("can't get to erc20 operations block")
+			}
+		}
+
+		if startFromTip {
+			testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr)
+		}
+
+		time.Sleep(10 * time.Second)
+
+		// verify
+		statsAfter := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO())
+		tokenStatsAfter, exists := statsAfter[erc20ContractAddr.Hex()]
+		if !exists {
+			t.Fatal("no erc20 stats found after failover")
+		}
+
+		var mintCountAfter, burnCountAfter, transferCountAfter int64
+		for _, s := range tokenStatsAfter {
+			mintCountAfter += s.MintCount
+			burnCountAfter += s.BurnCount
+			transferCountAfter += s.TransferCount
+		}
+
+		t.Logf("after failover - mints: %d, burns: %d, transfers: %d",
+			mintCountAfter, burnCountAfter, transferCountAfter)
+
+		if startFromTip {
+			// with --erc20-start-from-tip: operations during downtime should NOT be indexed
+			if mintCountAfter != mintCountBefore {
+				t.Fatalf("expected mint count unchanged (%d), got %d", mintCountBefore, mintCountAfter)
+			}
+			if burnCountAfter != 0 {
+				t.Fatalf("expected 0 burns with start-from-tip, got %d", burnCountAfter)
+			}
+			if transferCountAfter != 0 {
+				t.Fatalf("expected 0 transfers with start-from-tip, got %d", transferCountAfter)
+			}
+		} else {
+			// without --erc20-start-from-tip: all operations should be indexed
+			if mintCountAfter <= mintCountBefore {
+				t.Fatalf("expected more mints after failover: before=%d after=%d", mintCountBefore, mintCountAfter)
+			}
+			if burnCountAfter == 0 {
+				t.Fatal("expected burns to be indexed after failover")
+			}
+			if transferCountAfter == 0 {
+				t.Fatal("expected transfers to be indexed after failover")
+			}
+		}
+	}
+
+	t.Run("WithoutStartFromTip", func(t *testing.T) {
+		run(t, false)
+	})
+
+	t.Run("WithStartFromTip", func(t *testing.T) {
+		run(t, true)
+	})
+}
+
+func TestE2E_EOAActivityFailover(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	testCluster := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithEoaActivity(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()),
+	)
+	defer testCluster.Stop()
+
+	testCluster.Start()
+
+	// send initial transactions to generate EOA activity
+	testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000))
+	transferReceipt := testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000))
+	t.Log("initial transactions sent")
+
+	testCluster.DB.WaitForBlock(
+		transferReceipt.BlockNumber.Uint64(), 30*time.Second)
+
+	// verify initial EOA activity
+	statsBefore := testCluster.DB.GetEOAParticipationStats(context.TODO())
+
+	senderKey := senderAddress.Hex()
+	receiverKey := receiverAddress.Hex()
+
+	if _, exists := statsBefore[senderKey]; !exists {
+		t.Fatal("sender EOA activity not found before failover")
+	}
+
+	t.Logf("EOA stats before failover: sender hours=%d, receiver hours=%d",
+		len(statsBefore[senderKey]),
+		len(statsBefore[receiverKey]))
+
+	// stop node 0
+	testCluster.UCL.StopNode(0)
+	t.Log("node 0 stopped")
+
+	time.Sleep(10 * time.Second)
+
+	// failover UCL to node 1
+	testCluster.UCL.ChangeNodeRpcUrl(1)
+
+	// send transactions while syncer is down
+	testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(3000))
+	secondTransferReceipt := testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(4000))
+	t.Log("transactions sent while syncer was down")
+
+	// restart syncer on node 1
+	testCluster.RestartSyncer(testCluster.UCL.NodeRpcUrl(1))
+	t.Log("syncer restarted on node 1")
+
+	testCluster.DB.WaitForBlock(
+		secondTransferReceipt.BlockNumber.Uint64(),
+		30*time.Second)
+
+	// verify downtime EOA activity is indexed
+	statsAfterFailover := testCluster.DB.GetEOAParticipationStats(context.TODO())
+
+	senderHoursBefore := len(statsBefore[senderKey])
+	senderHoursAfter := len(statsAfterFailover[senderKey])
+
+	t.Logf("after failover: sender hours=%d, receiver hours=%d",
+		senderHoursAfter,
+		len(statsAfterFailover[receiverKey]))
+
+	if senderHoursAfter < senderHoursBefore {
+		t.Fatalf("sender hours decreased after failover: before=%d after=%d",
+			senderHoursBefore, senderHoursAfter)
+	}
+
+	// sender should still have activity
+	if _, exists := statsAfterFailover[senderKey]; !exists {
+		t.Fatal("sender EOA activity not found after failover")
+	}
+
+	// receiver should have activity (was recipient during downtime)
+	if _, exists := statsAfterFailover[receiverKey]; !exists {
+		t.Fatal("receiver EOA activity not found after failover")
+	}
+
+	// deploy contract and interact with it post-failover
+	receipt := testCluster.UCL.DeployERC20(pkSenderStr)
+	contractAddr := receipt.ContractAddress
+	t.Logf("erc20 deployed at %s post-failover", contractAddr.Hex())
+
+	pkThird, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	thirdAddress := crypto.PubkeyToAddress(pkThird.PublicKey)
+
+	// fund third address
+	testCluster.UCL.SendNativeTokens(pkSenderStr, thirdAddress, big.NewInt(1000000))
+
+	// mint and transfer ERC20
+	testCluster.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(500000))
+	erc20TransferReceipt := testCluster.UCL.TransferERC20(pkSenderStr, contractAddr, thirdAddress, big.NewInt(100000))
+	t.Log("post-failover contract interactions done")
+
+	testCluster.DB.WaitForBlock(
+		erc20TransferReceipt.BlockNumber.Uint64(), 30*time.Second)
+
+	// verify post-failover EOA activity
+	statsFinal := testCluster.DB.GetEOAParticipationStats(context.TODO())
+
+	thirdKey := thirdAddress.Hex()
+
+	t.Logf("final stats: sender hours=%d, receiver hours=%d, third hours=%d",
+		len(statsFinal[senderKey]),
+		len(statsFinal[receiverKey]),
+		len(statsFinal[thirdKey]))
+
+	if _, exists := statsFinal[senderKey]; !exists {
+		t.Fatal("sender EOA activity not found in final stats")
+	}
+
+	if _, exists := statsFinal[receiverKey]; !exists {
+		t.Fatal("receiver EOA activity not found in final stats")
+	}
+
+	// third address should appear - was involved in post-failover transactions
+	if _, exists := statsFinal[thirdKey]; !exists {
+		t.Fatal("third address EOA activity not found - post-failover activity not indexed")
+	}
+
+	t.Log("all EOA activity correctly indexed")
 }

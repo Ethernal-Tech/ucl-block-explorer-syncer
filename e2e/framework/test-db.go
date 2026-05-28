@@ -468,3 +468,35 @@ func (d *DB) GetTxCountAfterBlock(blockNumber uint64) uint64 {
 
 	return count
 }
+
+func (d *DB) WaitForBlock(block uint64, timeout time.Duration) error {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		lastBlockPtr, err := d.GetLastProcessedBlock()
+		if err != nil {
+			return err
+		}
+
+		if lastBlockPtr != nil && *lastBlockPtr > block {
+			return nil
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	return fmt.Errorf("timeout: syncer did not process up to block %d within %s", block, timeout)
+}
+
+func (d *DB) WaitForERC20Block(address common.Address, maxBlock uint64, timeout time.Duration) error {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		nextBlock := d.GetERC20NextBlock(address)
+		if nextBlock > maxBlock {
+			return nil
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	return fmt.Errorf("timeout: erc20 syncer did not process up to block %d within %s", maxBlock, timeout)
+}

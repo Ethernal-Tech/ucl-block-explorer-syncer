@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -118,15 +119,28 @@ func (tc *TestCluster) Stop() {
 	tc.DB.Stop()
 }
 
-func (tc *TestCluster) initLogsDir() {
-	dir := filepath.Join("../e2e-logs", fmt.Sprintf("%s-%d", tc.t.Name(), time.Now().UTC().UnixMilli()))
+func (fw *TestCluster) initLogsDir() {
+	name := fw.t.Name()
+	parent := name
+	sub := ""
 
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		tc.t.Fatalf("failed to create logs dir: %v", err)
+	if idx := strings.Index(name, "/"); idx != -1 {
+		parent = name[:idx]
+		sub = name[idx+1:]
 	}
 
-	tc.Config.LogsDir = dir
-	tc.t.Logf("logs dir: %s", dir)
+	dir := filepath.Join("../e2e-logs", fmt.Sprintf("%s-%d", parent, time.Now().UTC().UnixMilli()))
+
+	if sub != "" {
+		dir = filepath.Join(dir, sub)
+	}
+
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		fw.t.Fatalf("failed to create logs dir: %v", err)
+	}
+
+	fw.Config.LogsDir = dir
+	fw.t.Logf("logs dir: %s", dir)
 }
 
 func (tc *TestCluster) RestartSyncer(newRpcUrl string) {
