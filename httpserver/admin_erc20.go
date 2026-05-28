@@ -89,7 +89,7 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	normalized := strings.ToLower(common.HexToAddress(addr).Hex())
+	tokenAddr := common.HexToAddress(addr).Hex()
 
 	symbol := strings.TrimSpace(req.Symbol)
 	if len(symbol) > 32 {
@@ -128,7 +128,7 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 			decimals = COALESCE(EXCLUDED.decimals, chain.erc20_watchlist.decimals),
 			enabled = EXCLUDED.enabled,
 			updated_at = CURRENT_TIMESTAMP
-	`, normalized, sym, dec, enabled)
+	`, tokenAddr, sym, dec, enabled)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, dbError)
 
@@ -137,6 +137,6 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ok":      true,
-		"address": normalized,
+		"address": tokenAddr,
 	})
 }

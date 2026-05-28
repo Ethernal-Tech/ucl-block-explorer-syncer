@@ -54,7 +54,7 @@ func parseCirculationTimeRange(conn *sql.DB, req Erc20CirculationCumulativeReque
 
 	_ = conn.QueryRow(`
 		SELECT MIN(s.hour_utc) FROM chain.erc20_hourly_stats s
-		INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+		INNER JOIN chain.erc20_watchlist w ON w.address = s.token_address
 		WHERE w.enabled = true AND w.decimals IS NOT NULL
 	`).Scan(&ms)
 	if ms.Valid {
@@ -204,7 +204,7 @@ func buildCirculationHourlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Ci
 			SELECT s.hour_utc,
 			       SUM(s.cumulative_circulation / (10::numeric ^ w.decimals))::text AS total
 			FROM chain.erc20_hourly_stats s
-			INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+			INNER JOIN chain.erc20_watchlist w ON w.address = s.token_address
 			WHERE w.enabled = true AND w.decimals IS NOT NULL
 			  AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
 			GROUP BY s.hour_utc
@@ -250,7 +250,7 @@ func buildCirculationDailySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20Cir
 				date_trunc('day', hour_utc, 'UTC')::timestamptz AS day_utc,
 				SUM(s.cumulative_circulation / (10::numeric ^ w.decimals)) OVER (PARTITION BY s.hour_utc)::text AS total
 			FROM chain.erc20_hourly_stats s
-			INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+			INNER JOIN chain.erc20_watchlist w ON w.address = s.token_address
 			WHERE w.enabled = true AND w.decimals IS NOT NULL
 				AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
 			ORDER BY date_trunc('day', hour_utc, 'UTC'), hour_utc DESC
@@ -303,7 +303,7 @@ func buildCirculationMonthlySeries(conn *sql.DB, from, toEx time.Time) ([]Erc20C
 				SELECT s.hour_utc,
 					SUM(s.cumulative_circulation / (10::numeric ^ w.decimals))::text AS hourly_total
 				FROM chain.erc20_hourly_stats s
-				INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+				INNER JOIN chain.erc20_watchlist w ON w.address = s.token_address
 				WHERE w.enabled = true AND w.decimals IS NOT NULL
 					AND s.hour_utc >= $1::timestamptz AND s.hour_utc < $2::timestamptz
 				GROUP BY s.hour_utc

@@ -56,13 +56,13 @@ func (s *Server) handleAdminValidators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalized := strings.ToLower(common.HexToAddress(addr).Hex())
+	validatorAddr := common.HexToAddress(addr).Hex()
 
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
-		s.handleUpsertValidator(w, r, normalized)
+		s.handleUpsertValidator(w, r, validatorAddr)
 	case http.MethodDelete:
-		s.handleDeleteValidator(w, normalized)
+		s.handleDeleteValidator(w, validatorAddr)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, methodNotAllowed)
 	}

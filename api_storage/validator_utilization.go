@@ -3,7 +3,6 @@ package api_storage
 import (
 	"fmt"
 	"log"
-	"strings"
 	"time"
 )
 
@@ -116,9 +115,9 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	filters := ""
 
 	if req.Validator != "" {
-		filters += fmt.Sprintf(" AND lower(b.miner) = $%d", argIdx)
+		filters += fmt.Sprintf(" AND b.miner = $%d", argIdx)
 
-		args = append(args, strings.ToLower(req.Validator))
+		args = append(args, req.Validator)
 
 		argIdx++
 	}
@@ -136,7 +135,7 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	//nolint:gosec
 	query := fmt.Sprintf(`
 		SELECT
-			lower(b.miner) AS validator_address,
+			b.miner AS validator_address,
 			%s AS bucket,
 			COUNT(*) AS block_count,
 			SUM(b.gas_used)::text AS gas_used_total,
@@ -147,7 +146,7 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 			END AS utilization_pct
 		FROM chain.blocks b
 		WHERE 1=1 %s
-		GROUP BY lower(b.miner), %s
+		GROUP BY b.miner, %s
 		ORDER BY bucket ASC, validator_address ASC
 	`, truncExpr, filters, truncExpr)
 

@@ -743,7 +743,7 @@ func GetErc20DailyStats(req Erc20DailyStatsRequest) (*Erc20DailyStatsResponse, e
 	n := 1
 
 	if token != "" {
-		where += fmt.Sprintf(" AND lower(s.token_address) = lower($%d)", n)
+		where += fmt.Sprintf(" AND s.token_address = $%d", n)
 
 		args = append(args, token)
 
