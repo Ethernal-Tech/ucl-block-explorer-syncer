@@ -122,15 +122,15 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 
 	_, err = s.cfg.DB.ExecContext(r.Context(), `
 		INSERT INTO chain.erc20_watchlist (address, symbol, decimals, enabled, updated_at)
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+		VALUES ($1, COALESCE($2, ''), COALESCE($3, 0), $4, CURRENT_TIMESTAMP)
 		ON CONFLICT (address) DO UPDATE SET
-			symbol = COALESCE(EXCLUDED.symbol, chain.erc20_watchlist.symbol),
-			decimals = COALESCE(EXCLUDED.decimals, chain.erc20_watchlist.decimals),
+			symbol = COALESCE(NULLIF(EXCLUDED.symbol, ''), chain.erc20_watchlist.symbol),
+			decimals = COALESCE(NULLIF(EXCLUDED.decimals, 0), chain.erc20_watchlist.decimals),
 			enabled = EXCLUDED.enabled,
 			updated_at = CURRENT_TIMESTAMP
-	`, tokenAddr, sym, dec, enabled)
+`, tokenAddr, sym, dec, enabled)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, dbError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 
 		return
 	}

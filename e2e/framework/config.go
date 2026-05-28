@@ -36,11 +36,19 @@ type SyncerConfig struct {
 	EoaActivityStats  bool
 }
 
+type ApiConfig struct {
+	Listen      string
+	Logging     bool
+	AdminSecret string
+}
+
 type TestClusterConfig struct {
 	UCL     UCLConfig
 	DB      DBConfig
 	Syncer  SyncerConfig
+	API     ApiConfig
 	LogsDir string
+	WithAPI bool
 }
 
 func DefaultFrameworkConfig() *TestClusterConfig {
@@ -63,6 +71,10 @@ func DefaultFrameworkConfig() *TestClusterConfig {
 			PollInterval: 2000,
 			BatchSize:    1,
 			TxWorkers:    1,
+		},
+		API: ApiConfig{
+			Listen:      "localhost:8545",
+			AdminSecret: "test-secret",
 		},
 	}
 }

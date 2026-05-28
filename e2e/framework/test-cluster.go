@@ -16,6 +16,7 @@ type TestCluster struct {
 	UCL    *UCL
 	DB     *DB
 	Syncer *Syncer
+	API    *API
 	t      *testing.T
 }
 
@@ -75,6 +76,30 @@ func WithErc20StartFromTip() Option {
 	}
 }
 
+func WithAPILogging() Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.API.Logging = true
+	}
+}
+
+func WithAPIListen(addr string) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.API.Listen = addr
+	}
+}
+
+func WithAdminSecret(secret string) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.API.AdminSecret = secret
+	}
+}
+
+func WithAPI() Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.WithAPI = true
+	}
+}
+
 func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 	t.Helper()
 
@@ -95,6 +120,10 @@ func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 	fw.DB = NewDB(t, cfg.DB, cfg.LogsDir)
 	fw.Syncer = NewSyncer(t, cfg.Syncer, cfg.DB, cfg.LogsDir)
 
+	if cfg.WithAPI {
+		fw.API = NewAPI(t, cfg.API, cfg.DB, cfg.LogsDir)
+	}
+
 	sigCh := make(chan os.Signal, 1)
 
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -111,9 +140,17 @@ func (tc *TestCluster) Start() {
 	tc.DB.Start()
 	tc.UCL.Start()
 	tc.Syncer.Start()
+
+	if tc.Config.WithAPI {
+		tc.API.Start()
+	}
 }
 
 func (tc *TestCluster) Stop() {
+	if tc.Config.WithAPI {
+		tc.API.Stop()
+	}
+
 	tc.Syncer.Stop()
 	tc.UCL.Stop()
 	tc.DB.Stop()
