@@ -63,7 +63,7 @@ func (u *UCL) Start() {
 	}
 
 	u.node = n
-	u.WaitForBlock(1, time.Minute)
+	u.WaitForBlock(1, 3*time.Minute)
 
 	client, err := ethclient.Dial(u.config.RpcUrl)
 	if err != nil {
