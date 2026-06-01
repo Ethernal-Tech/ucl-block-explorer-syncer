@@ -306,10 +306,10 @@ func (d *DB) GetLastProcessedBlock() (*uint64, error) {
 	d.t.Helper()
 
 	var value string
+
 	err := d.conn.QueryRow(`
 		SELECT value FROM chain.metadata WHERE key = 'txworker_last_block_processed'
 	`).Scan(&value)
-
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -330,10 +330,10 @@ func (d *DB) GetLastProcessedERC20Block() (*uint64, error) {
 	d.t.Helper()
 
 	var value string
+
 	err := d.conn.QueryRow(`
 		SELECT value FROM chain.metadata WHERE key = 'eoa_activity_last_block_processed'
 	`).Scan(&value)
-
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -356,7 +356,9 @@ func (d *DB) GetTransactionByHash(
 	d.t.Helper()
 
 	var tx types.Transaction
+
 	var blockHash, toAddress, data, status *string
+
 	var blockNumber, blockTimestamp *uint64
 
 	var valueStr, gasPriceStr *string
@@ -387,10 +389,10 @@ func (d *DB) GetTransactionByHash(
 		&status,
 		&blockTimestamp,
 	)
-
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			d.t.Fatalf("transaction not found in DB for hash: %s", hash)
+
 			return nil
 		}
 

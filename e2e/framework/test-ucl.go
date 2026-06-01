@@ -185,7 +185,12 @@ func (u *UCL) getBlockNumber() (uint64, error) {
 	return num, nil
 }
 
-func (u *UCL) sendTx(privateKey string, to *common.Address, data []byte, value *big.Int, gasLimit uint64) *types.Receipt {
+func (u *UCL) sendTx(
+	privateKey string,
+	to *common.Address,
+	data []byte,
+	value *big.Int,
+	gasLimit uint64) *types.Receipt {
 	ctx := context.Background()
 
 	pk, err := crypto.HexToECDSA(strings.TrimPrefix(privateKey, "0x"))

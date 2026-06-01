@@ -217,44 +217,6 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 }
 
 func TestE2E_ERC20Stats(t *testing.T) {
-	wait := func(t *testing.T, ts *framework.TestCluster, block uint64) {
-		synced := false
-
-		for i := 0; i < 30; i++ {
-			lastBlockPtr, err := ts.DB.GetLastProcessedBlock()
-			if err != nil {
-				t.Fatalf("%v", err)
-			}
-
-			if lastBlockPtr != nil && *lastBlockPtr > block {
-				synced = true
-
-				break
-			}
-
-			time.Sleep(time.Second)
-		}
-
-		if !synced {
-			t.Fatalf("timeout: syncer did not process up to block %d within time limit", block)
-		}
-	}
-
-	waitERC20 := func(t *testing.T, ts *framework.TestCluster, address common.Address, maxBlock uint64) {
-		t.Helper()
-
-		for i := 0; i < 30; i++ {
-			nextBlock := ts.DB.GetERC20NextBlock(address)
-			if nextBlock > maxBlock {
-				return
-			}
-
-			time.Sleep(time.Second)
-		}
-
-		t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
-	}
-
 	run := func(t *testing.T, startFromTip bool) {
 		t.Helper()
 
@@ -297,7 +259,9 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			transferReceipt1.BlockNumber.Uint64(),
 		})
 
-		wait(t, ts, maxBlockNumber1)
+		if err := ts.DB.WaitForBlock(maxBlockNumber1, 30*time.Second); err != nil {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlockNumber1)
+		}
 
 		ts.DB.AddERC20ToWatchlist(erc20)
 
@@ -322,7 +286,9 @@ func TestE2E_ERC20Stats(t *testing.T) {
 
 		t.Logf("waiting for syncer to process up to block %d...", maxBlockNumber2)
 
-		waitERC20(t, ts, erc20, maxBlockNumber2)
+		if err := ts.DB.WaitForERC20Block(erc20, maxBlockNumber2, 30*time.Second); err != nil {
+			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlockNumber2)
+		}
 
 		ctx := context.TODO()
 
@@ -416,6 +382,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 
 		for _, hour := range hours {
 			expected := expected[hour]
+
 			got, ok := actualForToken[hour]
 			if !ok {
 				t.Fatalf("missing hour bucket %d in DB", hour)
@@ -481,44 +448,6 @@ func TestE2E_ERC20Stats(t *testing.T) {
 }
 
 func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
-	wait := func(t *testing.T, ts *framework.TestCluster, block uint64) {
-		synced := false
-
-		for i := 0; i < 30; i++ {
-			lastBlockPtr, err := ts.DB.GetLastProcessedBlock()
-			if err != nil {
-				t.Fatalf("%v", err)
-			}
-
-			if lastBlockPtr != nil && *lastBlockPtr > block {
-				synced = true
-
-				break
-			}
-
-			time.Sleep(time.Second)
-		}
-
-		if !synced {
-			t.Fatalf("timeout: syncer did not process up to block %d within time limit", block)
-		}
-	}
-
-	waitERC20 := func(t *testing.T, ts *framework.TestCluster, address common.Address, maxBlock uint64) {
-		t.Helper()
-
-		for i := 0; i < 30; i++ {
-			nextBlock := ts.DB.GetERC20NextBlock(address)
-			if nextBlock > maxBlock {
-				return
-			}
-
-			time.Sleep(time.Second)
-		}
-
-		t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
-	}
-
 	run := func(t *testing.T, startFromTip bool) {
 		t.Helper()
 
@@ -556,7 +485,9 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			active    bool
 		}
 
-		wait(t, ts, deployReceipt.BlockNumber.Uint64())
+		if err := ts.DB.WaitForBlock(deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", deployReceipt.BlockNumber.Uint64())
+		}
 
 		allOperations := []operation{
 			{deployReceipt, framework.Erc20ConstructorMintAmount, nil, nil, false},
@@ -590,7 +521,10 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(true)
 
 		maxBlock := allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		waitERC20(t, ts, erc20, maxBlock)
+
+		if err := ts.DB.WaitForERC20Block(erc20, maxBlock, 30*time.Second); err != nil {
+			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
+		}
 
 		ts.DB.RemoveERC20FromWatchlist(erc20)
 
@@ -604,7 +538,10 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(false)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		wait(t, ts, maxBlock)
+
+		if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
+		}
 
 		ts.DB.AddERC20ToWatchlist(erc20)
 
@@ -616,7 +553,10 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(true)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		waitERC20(t, ts, erc20, maxBlock)
+
+		if err := ts.DB.WaitForERC20Block(erc20, maxBlock, 30*time.Second); err != nil {
+			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
+		}
 
 		ts.DB.RemoveERC20FromWatchlist(erc20)
 
@@ -630,7 +570,9 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(false)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		wait(t, ts, maxBlock)
+		if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
+			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
+		}
 
 		ts.DB.AddERC20ToWatchlist(erc20)
 
@@ -643,7 +585,10 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(true)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		waitERC20(t, ts, erc20, maxBlock)
+
+		if err := ts.DB.WaitForERC20Block(erc20, maxBlock, 30*time.Second); err != nil {
+			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
+		}
 
 		maxBlockNumber := slices.Max(func() []uint64 {
 			blocks := make([]uint64, len(allOperations))
@@ -654,7 +599,9 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			return blocks
 		}())
 
-		waitERC20(t, ts, erc20, maxBlockNumber)
+		if err := ts.DB.WaitForERC20Block(erc20, maxBlockNumber, 30*time.Second); err != nil {
+			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlockNumber)
+		}
 
 		ctx := context.TODO()
 
@@ -728,6 +675,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		for _, hour := range hours {
 			exp := expected[hour]
+
 			got, ok := actualForToken[hour]
 			if !ok {
 				t.Fatalf("missing hour bucket %d in DB", hour)
@@ -795,6 +743,8 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 func TestE2E_EOAActivity(t *testing.T) {
 	wait := func(t *testing.T, ts *framework.TestCluster, block uint64) {
+		t.Helper()
+
 		synced := false
 
 		for i := 0; i < 30; i++ {
@@ -960,6 +910,7 @@ func TestE2E_EOAActivity(t *testing.T) {
 		expectedHours, ok := expected[addr]
 		if !ok {
 			t.Errorf("unexpected address %s found in DB with hours %v", addr, actualHours)
+
 			continue
 		}
 
@@ -1048,6 +999,8 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 func TestE2E_ERC20StatsFailover(t *testing.T) {
 	run := func(t *testing.T, startFromTip bool) {
+		t.Helper()
+
 		pkSender, err := crypto.GenerateKey()
 		if err != nil {
 			t.Fatalf("failed to generate key: %v", err)
@@ -1143,6 +1096,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 		testCluster.UCL.MintERC20(pkSenderStr, erc20ContractAddr, receiverAddress, big.NewInt(2000000))
 		testCluster.UCL.BurnERC20(pkSenderStr, erc20ContractAddr, big.NewInt(500000))
 		transferReceipt := testCluster.UCL.TransferERC20(pkSenderStr, erc20ContractAddr, receiverAddress, big.NewInt(100000))
+
 		t.Log("erc20 operations done while syncer was down")
 
 		// restart syncer on node 1
@@ -1169,6 +1123,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 
 		// verify
 		statsAfter := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO())
+
 		tokenStatsAfter, exists := statsAfter[erc20ContractAddr.Hex()]
 		if !exists {
 			t.Fatal("no erc20 stats found after failover")
@@ -1189,9 +1144,11 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 			if mintCountAfter != mintCountBefore {
 				t.Fatalf("expected mint count unchanged (%d), got %d", mintCountBefore, mintCountAfter)
 			}
+
 			if burnCountAfter != 0 {
 				t.Fatalf("expected 0 burns with start-from-tip, got %d", burnCountAfter)
 			}
+
 			if transferCountAfter != 0 {
 				t.Fatalf("expected 0 transfers with start-from-tip, got %d", transferCountAfter)
 			}
@@ -1200,9 +1157,11 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 			if mintCountAfter <= mintCountBefore {
 				t.Fatalf("expected more mints after failover: before=%d after=%d", mintCountBefore, mintCountAfter)
 			}
+
 			if burnCountAfter == 0 {
 				t.Fatal("expected burns to be indexed after failover")
 			}
+
 			if transferCountAfter == 0 {
 				t.Fatal("expected transfers to be indexed after failover")
 			}
@@ -1246,6 +1205,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	// send initial transactions to generate EOA activity
 	testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000))
 	transferReceipt := testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000))
+
 	t.Log("initial transactions sent")
 
 	testCluster.DB.WaitForBlock(
@@ -1277,6 +1237,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	// send transactions while syncer is down
 	testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(3000))
 	secondTransferReceipt := testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(4000))
+
 	t.Log("transactions sent while syncer was down")
 
 	// restart syncer on node 1
@@ -1321,6 +1282,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate key: %v", err)
 	}
+
 	thirdAddress := crypto.PubkeyToAddress(pkThird.PublicKey)
 
 	// fund third address
@@ -1329,6 +1291,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	// mint and transfer ERC20
 	testCluster.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(500000))
 	erc20TransferReceipt := testCluster.UCL.TransferERC20(pkSenderStr, contractAddr, thirdAddress, big.NewInt(100000))
+
 	t.Log("post-failover contract interactions done")
 
 	testCluster.DB.WaitForBlock(

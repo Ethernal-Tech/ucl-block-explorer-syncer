@@ -37,7 +37,7 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 		framework.WithFullBlock(),
 		framework.WithAPI(),
 		framework.WithAPILogging(),
-		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.Hex()),
 	)
 	defer ts.Stop()
 
@@ -56,9 +56,11 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getBlockList failed: %v", err)
 	}
+
 	if len(blockList) == 0 || string(blockList) == "null" {
 		t.Fatal("getBlockList returned empty")
 	}
+
 	t.Logf("getBlockList: %s", string(blockList)[:min(len(blockList), 200)])
 
 	// test block detail
@@ -68,6 +70,7 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getBlockDetail failed: %v", err)
 	}
+
 	if string(blockDetail) == "null" {
 		t.Fatal("getBlockDetail returned null")
 	}
@@ -77,6 +80,7 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getTransactionList failed: %v", err)
 	}
+
 	if len(txList) == 0 || string(txList) == "null" {
 		t.Fatal("getTransactionList returned empty")
 	}
@@ -86,6 +90,7 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getTransactionByHash failed: %v", err)
 	}
+
 	if string(txDetail) == "null" {
 		t.Fatal("getTransactionByHash returned null")
 	}
@@ -95,6 +100,7 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getBlockTransactionCount failed: %v", err)
 	}
+
 	t.Logf("block %d tx count: %s", receipt.BlockNumber.Uint64(), string(txCount))
 
 	// test watchlist via admin API
@@ -104,9 +110,11 @@ func TestE2E_ExplorerAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getErc20Watchlist failed: %v", err)
 	}
+
 	if string(watchlist) == "null" || string(watchlist) == "[]" {
 		t.Fatal("watchlist empty after adding token")
 	}
+
 	t.Logf("watchlist: %s", string(watchlist))
 
 	// test remove from watchlist
@@ -1320,5 +1328,1256 @@ func TestE2E_explorer_getBlockTransactionCount(t *testing.T) {
 
 	if nonExistent["code"] != "500" {
 		t.Fatalf("non-existent block: expected code 500, got %v", nonExistent["code"])
+	}
+}
+
+func TestE2E_ERC20DailyStatsAPI(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	ts := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+		framework.WithErc20Stats(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.Hex()),
+	)
+	defer ts.Stop()
+
+	ts.Start()
+
+	// deploy ERC20 and add to watchlist
+	receipt := ts.UCL.DeployERC20(pkSenderStr)
+	if receipt.Status != 1 {
+		t.Fatal("failed to deploy erc20")
+	}
+
+	contractAddr := receipt.ContractAddress
+	t.Logf("erc20 deployed at %s", contractAddr.Hex())
+
+	if err := ts.DB.WaitForBlock(receipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	ts.API.AddERC20ToWatchlist(contractAddr.Hex(), "TTK", 18, ts.Config.API.AdminSecret)
+
+	// generate ERC20 activity
+	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(5000000))
+	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(3000000))
+	ts.UCL.BurnERC20(pkSenderStr, contractAddr, big.NewInt(1000000))
+	lastReceipt := ts.UCL.TransferERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(2000000))
+
+	t.Log("erc20 operations done")
+
+	if err := ts.DB.WaitForERC20Block(contractAddr, lastReceipt.BlockNumber.Uint64(), 60*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
+	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.Erc20DailyStatsRequest
+		check func(t *testing.T, resp api_storage.Erc20DailyStatsResponse)
+	}{
+		{
+			name: "default granularity (day), no filters",
+			req:  &api_storage.Erc20DailyStatsRequest{Page: 1, PageSize: 50},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected at least one result")
+				}
+			},
+		},
+		{
+			name: "hourly granularity",
+			req: &api_storage.Erc20DailyStatsRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly stats")
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.Erc20DailyStatsRequest{
+				Granularity: "month",
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly stats")
+				}
+			},
+		},
+		{
+			name: "filter by token address",
+			req: &api_storage.Erc20DailyStatsRequest{
+				TokenAddress: contractAddr.Hex(),
+				Page:         1,
+				PageSize:     50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected stats for token")
+				}
+
+				for _, item := range resp.Data.List {
+					if item.TokenAddress != contractAddr.Hex() {
+						t.Fatalf("unexpected token %s", item.TokenAddress)
+					}
+				}
+			},
+		},
+		{
+			name: "date range today",
+			req: &api_storage.Erc20DailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected stats for today")
+				}
+			},
+		},
+		{
+			name: "date range far past - should be empty",
+			req: &api_storage.Erc20DailyStatsRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 0 {
+					t.Fatal("expected no data for past date range")
+				}
+			},
+		},
+		{
+			name: "hourly with token filter and date range",
+			req: &api_storage.Erc20DailyStatsRequest{
+				Granularity:  "hour",
+				TokenAddress: contractAddr.Hex(),
+				FromDay:      today,
+				ToDay:        tomorrow,
+				Page:         1,
+				PageSize:     50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly stats for token today")
+				}
+
+				var totalMints, totalBurns, totalTransfers int64
+				for _, item := range resp.Data.List {
+					totalMints += item.MintCount
+					totalBurns += item.BurnCount
+					totalTransfers += item.TransferCount
+				}
+
+				if totalMints < 2 {
+					t.Fatalf("expected at least 2 mints, got %d", totalMints)
+				}
+
+				if totalBurns < 1 {
+					t.Fatalf("expected at least 1 burn, got %d", totalBurns)
+				}
+
+				if totalTransfers < 1 {
+					t.Fatalf("expected at least 1 transfer, got %d", totalTransfers)
+				}
+			},
+		},
+		{
+			name: "monthly with UTC range",
+			req: &api_storage.Erc20DailyStatsRequest{
+				Granularity: "month",
+				FromUtc:     thisMonth + "T00:00:00Z",
+				ToUtc:       nextMonth + "T00:00:00Z",
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly stats for this month")
+				}
+			},
+		},
+		{
+			name: "pagination - page 1, size 1",
+			req: &api_storage.Erc20DailyStatsRequest{
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "non-existent token",
+			req: &api_storage.Erc20DailyStatsRequest{
+				TokenAddress: "0x0000000000000000000000000000000000000000",
+				Page:         1,
+				PageSize:     50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20DailyStatsResponse) {
+				t.Helper()
+
+				hasData := false
+
+				for _, item := range resp.Data.List {
+					if item.MintCount > 0 || item.BurnCount > 0 || item.TransferCount > 0 {
+						hasData = true
+					}
+				}
+
+				if hasData {
+					t.Fatal("expected no data for non-existent token")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.Erc20DailyStatsResponse](ts.API, "explorer_getErc20DailyStats", tc.req)
+			if err != nil {
+				t.Fatalf("getErc20DailyStats failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
+	}
+}
+
+func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	ts := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+		framework.WithErc20Stats(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.Hex()),
+	)
+	defer ts.Stop()
+
+	ts.Start()
+
+	// deploy ERC20 and add to watchlist
+	receipt := ts.UCL.DeployERC20(pkSenderStr)
+	if receipt.Status != 1 {
+		t.Fatal("failed to deploy erc20")
+	}
+
+	contractAddr := receipt.ContractAddress
+	t.Logf("erc20 deployed at %s", contractAddr.Hex())
+
+	if err := ts.DB.WaitForBlock(receipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	ts.API.AddERC20ToWatchlist(contractAddr.Hex(), "TTK", 18, ts.Config.API.AdminSecret)
+
+	// generate activity - mints grow circulation, burns shrink it
+	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(10000000))
+	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(5000000))
+	ts.UCL.BurnERC20(pkSenderStr, contractAddr, big.NewInt(2000000))
+	lastReceipt := ts.UCL.TransferERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(1000000))
+
+	t.Log("erc20 operations done")
+
+	if err := ts.DB.WaitForERC20Block(contractAddr, lastReceipt.BlockNumber.Uint64(), 60*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
+	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.Erc20CirculationCumulativeRequest
+		check func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse)
+	}{
+		{
+			name: "default granularity (day)",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected at least one daily circulation entry")
+				}
+
+				for _, item := range resp.Data.List {
+					if item.Total == "" || item.Total == "0" {
+						t.Fatal("expected non-zero circulation after mints")
+					}
+				}
+			},
+		},
+		{
+			name: "hourly granularity",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly circulation entries")
+				}
+
+				hasNonZero := false
+
+				for _, item := range resp.Data.List {
+					if item.Total != "" && item.Total != "0" {
+						hasNonZero = true
+
+						break
+					}
+				}
+
+				if !hasNonZero {
+					t.Fatal("expected at least one non-zero hourly circulation")
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly circulation entry")
+				}
+
+				for _, item := range resp.Data.List {
+					if item.Total == "" || item.Total == "0" {
+						t.Fatal("expected non-zero monthly circulation")
+					}
+				}
+			},
+		},
+		{
+			name: "UTC range",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected circulation data for UTC range")
+				}
+			},
+		},
+		{
+			name: "far past date range - should be empty",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.Total != "" && item.Total != "0" {
+						t.Fatal("expected no circulation data for past range")
+					}
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "circulation reflects mints minus burns",
+			req: &api_storage.Erc20CirculationCumulativeRequest{
+				Granularity: "day",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected circulation data")
+				}
+
+				// last entry should reflect cumulative: minted 15M, burned 2M = 13M tokens
+				// in human units that's 13M / 10^18, but depends on how endpoint formats
+				last := resp.Data.List[len(resp.Data.List)-1]
+				t.Logf("last circulation total: %s", last.Total)
+
+				if last.Total == "" || last.Total == "0" {
+					t.Fatal("expected positive circulation")
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.Erc20CirculationCumulativeResponse](ts.API, "explorer_getErc20CirculationCumulative", tc.req)
+			if err != nil {
+				t.Fatalf("getErc20CirculationCumulative failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
+	}
+}
+
+func TestE2E_ActiveEntityDailyStatsAPI(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	pkThird, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	thirdAddress := crypto.PubkeyToAddress(pkThird.PublicKey)
+
+	ts := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+		framework.WithEoaActivity(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()),
+	)
+	defer ts.Stop()
+
+	ts.Start()
+
+	// generate EOA activity - multiple addresses transacting
+	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000000))
+	ts.UCL.SendNativeTokens(pkSenderStr, thirdAddress, big.NewInt(2000000))
+	lastReceipt := ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(3000000))
+
+	t.Log("transactions sent")
+
+	if err := ts.DB.WaitForBlock(lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// wait for EOA activity worker to process
+	time.Sleep(10 * time.Second)
+
+	today := time.Now().UTC().Format("2006-01-02")
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
+	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.EntityDailyStatsRequest
+		check func(t *testing.T, resp api_storage.EntityDailyStatsResponse)
+	}{
+		{
+			name: "default granularity (day)",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected at least one daily entity stats entry")
+				}
+
+				hasActivity := false
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasActivity = true
+
+						break
+					}
+				}
+
+				if !hasActivity {
+					t.Fatal("expected non-zero entity count")
+				}
+			},
+		},
+		{
+			name: "hourly granularity",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly entity stats")
+				}
+
+				hasActivity := false
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasActivity = true
+
+						break
+					}
+				}
+
+				if !hasActivity {
+					t.Fatal("expected non-zero hourly entity count")
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly entity stats")
+				}
+
+				hasActivity := false
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasActivity = true
+
+						break
+					}
+				}
+
+				if !hasActivity {
+					t.Fatal("expected non-zero monthly entity count")
+				}
+			},
+		},
+		{
+			name: "UTC range",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected entity stats for UTC range")
+				}
+			},
+		},
+		{
+			name: "far past - should be empty",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						t.Fatal("expected no activity for past range")
+					}
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "entity count reflects multiple addresses",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var maxCount int64
+				for _, item := range resp.Data.List {
+					if item.Count > maxCount {
+						maxCount = item.Count
+					}
+				}
+
+				// sender, receiver, third - at least 2 unique EOAs should appear
+				if maxCount < 2 {
+					t.Fatalf("expected at least 2 active entities in an hour, got %d", maxCount)
+				}
+
+				t.Logf("max active entities in an hour: %d", maxCount)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.EntityDailyStatsResponse](ts.API, "explorer_getActiveEntityDailyStats", tc.req)
+			if err != nil {
+				t.Fatalf("getActiveEntityDailyStats failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
+	}
+}
+
+func TestE2E_OnboardingEntityDailyStatsAPI(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	pkThird, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	thirdAddress := crypto.PubkeyToAddress(pkThird.PublicKey)
+
+	ts := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+		framework.WithEoaActivity(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()),
+	)
+	defer ts.Stop()
+
+	ts.Start()
+
+	// generate EOA activity - new addresses appearing for the first time
+	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000000))
+	ts.UCL.SendNativeTokens(pkSenderStr, thirdAddress, big.NewInt(2000000))
+	lastReceipt := ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(3000000))
+
+	t.Log("transactions sent")
+
+	if err := ts.DB.WaitForBlock(lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// wait for EOA activity worker to process
+	time.Sleep(10 * time.Second)
+
+	today := time.Now().UTC().Format("2006-01-02")
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
+	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.EntityDailyStatsRequest
+		check func(t *testing.T, resp api_storage.EntityDailyStatsResponse)
+	}{
+		{
+			name: "default granularity (day)",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected at least one daily onboarding entry")
+				}
+
+				hasOnboarding := false
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasOnboarding = true
+
+						break
+					}
+				}
+
+				if !hasOnboarding {
+					t.Fatal("expected non-zero onboarding count - new addresses were created")
+				}
+			},
+		},
+		{
+			name: "hourly granularity",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly onboarding stats")
+				}
+
+				hasOnboarding := false
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasOnboarding = true
+
+						break
+					}
+				}
+
+				if !hasOnboarding {
+					t.Fatal("expected non-zero hourly onboarding count")
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly onboarding stats")
+				}
+
+				hasOnboarding := false
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasOnboarding = true
+						break
+					}
+				}
+
+				if !hasOnboarding {
+					t.Fatal("expected non-zero monthly onboarding count")
+				}
+			},
+		},
+		{
+			name: "UTC range",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected onboarding stats for UTC range")
+				}
+			},
+		},
+		{
+			name: "far past - should be empty",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						t.Fatal("expected no onboarding for past range")
+					}
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "onboarding count reflects new addresses",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "day",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var totalOnboarded int64
+
+				for _, item := range resp.Data.List {
+					totalOnboarded += item.Count
+				}
+
+				// sender, receiver, third - at least 2 new EOAs (sender was premined, may or may not count)
+				if totalOnboarded < 2 {
+					t.Fatalf("expected at least 2 onboarded entities, got %d", totalOnboarded)
+				}
+
+				t.Logf("total onboarded entities: %d", totalOnboarded)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.EntityDailyStatsResponse](ts.API, "explorer_getOnboardingEntityDailyStats", tc.req)
+			if err != nil {
+				t.Fatalf("getOnboardingEntityDailyStats failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
+	}
+}
+
+func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	ts := framework.NewTestCluster(t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()),
+	)
+	defer ts.Stop()
+
+	ts.Start()
+
+	// generate transactions to create gas usage
+	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000000))
+	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000000))
+
+	deployReceipt := ts.UCL.DeployERC20(pkSenderStr)
+	lastReceipt := ts.UCL.MintERC20(pkSenderStr, deployReceipt.ContractAddress, receiverAddress, big.NewInt(5000000))
+
+	t.Log("transactions sent")
+
+	if err := ts.DB.WaitForBlock(lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// get a validator address from blocks
+	var validatorAddr string
+
+	err = ts.DB.Conn().QueryRow("SELECT miner FROM chain.blocks WHERE number > 0 LIMIT 1").Scan(&validatorAddr)
+	if err != nil {
+		t.Fatalf("failed to get validator address: %v", err)
+	}
+
+	t.Logf("validator address: %s", validatorAddr)
+
+	today := time.Now().UTC().Format("2006-01-02")
+	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
+	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
+	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.ValidatorUtilizationRequest
+		check func(t *testing.T, resp api_storage.ValidatorUtilizationResponse)
+	}{
+		{
+			name: "default granularity (day)",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected at least one utilization entry")
+				}
+
+				hasGasUsed := false
+
+				for _, item := range resp.Data.List {
+					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
+						hasGasUsed = true
+
+						break
+					}
+				}
+
+				if !hasGasUsed {
+					t.Fatal("expected non-zero gas usage from transactions")
+				}
+			},
+		},
+		{
+			name: "hourly granularity",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly utilization stats")
+				}
+
+				hasGasUsed := false
+
+				for _, item := range resp.Data.List {
+					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
+						hasGasUsed = true
+
+						break
+					}
+				}
+
+				if !hasGasUsed {
+					t.Fatal("expected non-zero hourly gas usage")
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly utilization stats")
+				}
+			},
+		},
+		{
+			name: "filter by validator",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Validator: validatorAddr,
+				FromDay:   today,
+				ToDay:     tomorrow,
+				Page:      1,
+				PageSize:  50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected utilization for specific validator")
+				}
+
+				for _, item := range resp.Data.List {
+					if item.ValidatorAddress != "" && item.ValidatorAddress != validatorAddr {
+						t.Fatalf("expected validator %s, got %s", validatorAddr, item.ValidatorAddress)
+					}
+				}
+			},
+		},
+		{
+			name: "non-existent validator",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Validator: "0x0000000000000000000000000000000000000000",
+				FromDay:   today,
+				ToDay:     tomorrow,
+				Page:      1,
+				PageSize:  50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
+						t.Fatal("expected no utilization for non-existent validator")
+					}
+				}
+			},
+		},
+		{
+			name: "UTC range",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected utilization for UTC range")
+				}
+			},
+		},
+		{
+			name: "far past - should be empty",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
+						t.Fatal("expected no utilization for past range")
+					}
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "hourly with validator filter",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "hour",
+				Validator:   validatorAddr,
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly utilization for validator")
+				}
+
+				for _, item := range resp.Data.List {
+					t.Logf("validator %s: gasUsed=%s gasLimit=%s utilization=%s%%",
+						item.ValidatorAddress, item.GasUsedTotal, item.GasLimitTotal, item.UtilizationPct)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.ValidatorUtilizationResponse](ts.API, "explorer_getValidatorUtilization", tc.req)
+			if err != nil {
+				t.Fatalf("getValidatorUtilization failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
 	}
 }

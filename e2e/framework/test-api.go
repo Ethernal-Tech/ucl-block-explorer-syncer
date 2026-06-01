@@ -22,6 +22,8 @@ type API struct {
 }
 
 func NewAPI(t *testing.T, cfg ApiConfig, dbCfg DBConfig, logsDir string) *API {
+	t.Helper()
+
 	if cfg.Listen == "" {
 		cfg.Listen = "0.0.0.0:8545"
 	}
@@ -64,6 +66,7 @@ func (a *API) Stop() {
 	}
 
 	syscall.Kill(-a.node.cmd.Process.Pid, syscall.SIGTERM)
+
 	select {
 	case <-a.node.Wait():
 	case <-time.After(10 * time.Second):
@@ -86,8 +89,10 @@ func (a *API) waitReady(timeout time.Duration) {
 		if err == nil {
 			resp.Body.Close()
 			a.t.Log("api ready")
+
 			return
 		}
+
 		time.Sleep(time.Second)
 	}
 
@@ -156,6 +161,161 @@ func (a *API) RemoveERC20FromWatchlist(address, secret string) {
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		a.t.Fatalf("failed to remove erc20 from watchlist: status=%d body=%s", resp.StatusCode, respBody)
+	}
+}
+
+func (a *API) UpsertValidator(address, name, institution, region, secret string) {
+	body, err := json.Marshal(map[string]interface{}{
+		"name":        name,
+		"institution": institution,
+		"region":      region,
+	})
+	if err != nil {
+		a.t.Fatalf("failed to marshal validator request: %v", err)
+	}
+
+	req, err := http.NewRequest("PUT",
+		fmt.Sprintf("%s/admin/v1/validators/%s", a.URL(), address),
+		bytes.NewReader(body))
+	if err != nil {
+		a.t.Fatalf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		a.t.Fatalf("failed to upsert validator: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		a.t.Fatalf("failed to upsert validator: status=%d body=%s", resp.StatusCode, respBody)
+	}
+}
+
+func (a *API) DeleteValidator(address, secret string) {
+	req, err := http.NewRequest("DELETE",
+		fmt.Sprintf("%s/admin/v1/validators/%s", a.URL(), address),
+		nil)
+	if err != nil {
+		a.t.Fatalf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		a.t.Fatalf("failed to delete validator: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		a.t.Fatalf("failed to delete validator: status=%d body=%s", resp.StatusCode, respBody)
+	}
+}
+
+func (a *API) CreateAssetIssuer(name, website, contact, region, secret string, assets []string) string {
+	body, err := json.Marshal(map[string]interface{}{
+		"name":    name,
+		"website": website,
+		"contact": contact,
+		"region":  region,
+		"assets":  assets,
+	})
+	if err != nil {
+		a.t.Fatalf("failed to marshal asset issuer request: %v", err)
+	}
+
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("%s/admin/v1/asset-issuers", a.URL()),
+		bytes.NewReader(body))
+	if err != nil {
+		a.t.Fatalf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		a.t.Fatalf("failed to create asset issuer: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		a.t.Fatalf("failed to create asset issuer: status=%d body=%s", resp.StatusCode, respBody)
+	}
+
+	var result struct {
+		OK bool   `json:"ok"`
+		ID string `json:"id"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		a.t.Fatalf("failed to decode response: %v", err)
+	}
+
+	return result.ID
+}
+
+func (a *API) UpdateAssetIssuer(id, name, website, contact, region, secret string, assets []string) {
+	body, err := json.Marshal(map[string]interface{}{
+		"name":    name,
+		"website": website,
+		"contact": contact,
+		"region":  region,
+		"assets":  assets,
+	})
+	if err != nil {
+		a.t.Fatalf("failed to marshal asset issuer request: %v", err)
+	}
+
+	req, err := http.NewRequest("PUT",
+		fmt.Sprintf("%s/admin/v1/asset-issuers/%s", a.URL(), id),
+		bytes.NewReader(body))
+	if err != nil {
+		a.t.Fatalf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		a.t.Fatalf("failed to update asset issuer: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		a.t.Fatalf("failed to update asset issuer: status=%d body=%s", resp.StatusCode, respBody)
+	}
+}
+
+func (a *API) DeleteAssetIssuer(id, secret string) {
+	req, err := http.NewRequest("DELETE",
+		fmt.Sprintf("%s/admin/v1/asset-issuers/%s", a.URL(), id),
+		nil)
+	if err != nil {
+		a.t.Fatalf("failed to create request: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		a.t.Fatalf("failed to delete asset issuer: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		a.t.Fatalf("failed to delete asset issuer: status=%d body=%s", resp.StatusCode, respBody)
 	}
 }
 
