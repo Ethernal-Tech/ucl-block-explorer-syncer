@@ -380,63 +380,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			t.Errorf("expected %d hour buckets, got %d", len(expected), len(actualForToken))
 		}
 
-		for _, hour := range hours {
-			expected := expected[hour]
-
-			got, ok := actualForToken[hour]
-			if !ok {
-				t.Fatalf("missing hour bucket %d in DB", hour)
-			}
-
-			if expected.MintCount != got.MintCount {
-				t.Fatalf("hour %d: mint count: expected %d, got %d",
-					hour,
-					expected.MintCount,
-					got.MintCount)
-			}
-
-			if expected.MintVolumeRaw.Cmp(got.MintVolumeRaw) != 0 {
-				t.Fatalf("hour %d: mint volume: expected %s, got %s",
-					hour,
-					expected.MintVolumeRaw,
-					got.MintVolumeRaw)
-			}
-
-			if expected.BurnCount != got.BurnCount {
-				t.Fatalf("hour %d: burn count: expected %d, got %d",
-					hour,
-					expected.BurnCount,
-					got.BurnCount)
-			}
-
-			if expected.BurnVolumeRaw.Cmp(got.BurnVolumeRaw) != 0 {
-				t.Fatalf("hour %d: burn volume: expected %s, got %s",
-					hour,
-					expected.BurnVolumeRaw,
-					got.BurnVolumeRaw)
-			}
-
-			if expected.TransferCount != got.TransferCount {
-				t.Fatalf("hour %d: transfer count: expected %d, got %d",
-					hour,
-					expected.TransferCount,
-					got.TransferCount)
-			}
-
-			if expected.TransferVolumeRaw.Cmp(got.TransferVolumeRaw) != 0 {
-				t.Fatalf("hour %d: transfer volume: expected %s, got %s",
-					hour,
-					expected.TransferVolumeRaw,
-					got.TransferVolumeRaw)
-			}
-
-			if expected.CumulativeCirculation.Cmp(got.CumulativeCirculation) != 0 {
-				t.Fatalf("hour %d: cumulative circulation: expected %s, got %s",
-					hour,
-					expected.CumulativeCirculation,
-					got.CumulativeCirculation)
-			}
-		}
+		assertHourlyStats(t, hours, expected, actualForToken)
 	}
 	t.Run("WithoutStartFromTip", func(t *testing.T) {
 		run(t, false)
@@ -673,63 +617,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			t.Errorf("expected %d hour buckets, got %d", len(expected), len(actualForToken))
 		}
 
-		for _, hour := range hours {
-			exp := expected[hour]
-
-			got, ok := actualForToken[hour]
-			if !ok {
-				t.Fatalf("missing hour bucket %d in DB", hour)
-			}
-
-			if exp.MintCount != got.MintCount {
-				t.Fatalf("hour %d: mint count: expected %d, got %d",
-					hour,
-					exp.MintCount,
-					got.MintCount)
-			}
-
-			if exp.MintVolumeRaw.Cmp(got.MintVolumeRaw) != 0 {
-				t.Fatalf("hour %d: mint volume: expected %s, got %s",
-					hour,
-					exp.MintVolumeRaw,
-					got.MintVolumeRaw)
-			}
-
-			if exp.BurnCount != got.BurnCount {
-				t.Fatalf("hour %d: burn count: expected %d, got %d",
-					hour,
-					exp.BurnCount,
-					got.BurnCount)
-			}
-
-			if exp.BurnVolumeRaw.Cmp(got.BurnVolumeRaw) != 0 {
-				t.Fatalf("hour %d: burn volume: expected %s, got %s",
-					hour,
-					exp.BurnVolumeRaw,
-					got.BurnVolumeRaw)
-			}
-
-			if exp.TransferCount != got.TransferCount {
-				t.Fatalf("hour %d: transfer count: expected %d, got %d",
-					hour,
-					exp.TransferCount,
-					got.TransferCount)
-			}
-
-			if exp.TransferVolumeRaw.Cmp(got.TransferVolumeRaw) != 0 {
-				t.Fatalf("hour %d: transfer volume: expected %s, got %s",
-					hour,
-					exp.TransferVolumeRaw,
-					got.TransferVolumeRaw)
-			}
-
-			if exp.CumulativeCirculation.Cmp(got.CumulativeCirculation) != 0 {
-				t.Fatalf("hour %d: cumulative circulation: expected %s, got %s",
-					hour,
-					exp.CumulativeCirculation,
-					got.CumulativeCirculation)
-			}
-		}
+		assertHourlyStats(t, hours, expected, actualForToken)
 	}
 
 	t.Run("WithoutStartFromTip", func(t *testing.T) {
@@ -739,6 +627,72 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 	t.Run("WithStartFromTip", func(t *testing.T) {
 		run(t, true)
 	})
+}
+
+func assertHourlyStats(
+	t *testing.T,
+	hours []hexutil.Uint64,
+	expected map[hexutil.Uint64]framework.HourlyStats,
+	actualForToken map[hexutil.Uint64]framework.HourlyStats) {
+	t.Helper()
+
+	for _, hour := range hours {
+		exp := expected[hour]
+
+		got, ok := actualForToken[hour]
+		if !ok {
+			t.Fatalf("missing hour bucket %d in DB", hour)
+		}
+
+		if exp.MintCount != got.MintCount {
+			t.Fatalf("hour %d: mint count: expected %d, got %d",
+				hour,
+				exp.MintCount,
+				got.MintCount)
+		}
+
+		if exp.MintVolumeRaw.Cmp(got.MintVolumeRaw) != 0 {
+			t.Fatalf("hour %d: mint volume: expected %s, got %s",
+				hour,
+				exp.MintVolumeRaw,
+				got.MintVolumeRaw)
+		}
+
+		if exp.BurnCount != got.BurnCount {
+			t.Fatalf("hour %d: burn count: expected %d, got %d",
+				hour,
+				exp.BurnCount,
+				got.BurnCount)
+		}
+
+		if exp.BurnVolumeRaw.Cmp(got.BurnVolumeRaw) != 0 {
+			t.Fatalf("hour %d: burn volume: expected %s, got %s",
+				hour,
+				exp.BurnVolumeRaw,
+				got.BurnVolumeRaw)
+		}
+
+		if exp.TransferCount != got.TransferCount {
+			t.Fatalf("hour %d: transfer count: expected %d, got %d",
+				hour,
+				exp.TransferCount,
+				got.TransferCount)
+		}
+
+		if exp.TransferVolumeRaw.Cmp(got.TransferVolumeRaw) != 0 {
+			t.Fatalf("hour %d: transfer volume: expected %s, got %s",
+				hour,
+				exp.TransferVolumeRaw,
+				got.TransferVolumeRaw)
+		}
+
+		if exp.CumulativeCirculation.Cmp(got.CumulativeCirculation) != 0 {
+			t.Fatalf("hour %d: cumulative circulation: expected %s, got %s",
+				hour,
+				exp.CumulativeCirculation,
+				got.CumulativeCirculation)
+		}
+	}
 }
 
 func TestE2E_EOAActivity(t *testing.T) {
