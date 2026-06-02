@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"math/rand/v2"
@@ -22,119 +21,13 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func TestE2E_ExplorerAPI(t *testing.T) {
-	pkSender, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
-	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
-	receiverAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
-
-	ts := framework.NewTestCluster(t,
-		framework.WithLogging(),
-		framework.WithFullBlock(),
-		framework.WithAPI(),
-		framework.WithAPILogging(),
-		framework.WithUclFlags("write-logs", "--premine", senderAddress.Hex()),
-	)
-	defer ts.Stop()
-
-	ts.Start()
-
-	// send transactions so there's data
-	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000))
-	receipt := ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000))
-
-	if err := ts.DB.WaitForBlock(receipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
-		t.Fatal(err)
-	}
-
-	// test block list
-	blockList, err := framework.Call[json.RawMessage](ts.API, "explorer_getBlockList")
-	if err != nil {
-		t.Fatalf("getBlockList failed: %v", err)
-	}
-
-	if len(blockList) == 0 || string(blockList) == "null" {
-		t.Fatal("getBlockList returned empty")
-	}
-
-	t.Logf("getBlockList: %s", string(blockList)[:min(len(blockList), 200)])
-
-	// test block detail
-	blockDetail, err := framework.Call[json.RawMessage](ts.API, "explorer_getBlockDetail", map[string]interface{}{
-		"number": receipt.BlockNumber.Uint64(),
-	})
-	if err != nil {
-		t.Fatalf("getBlockDetail failed: %v", err)
-	}
-
-	if string(blockDetail) == "null" {
-		t.Fatal("getBlockDetail returned null")
-	}
-
-	// test transaction list
-	txList, err := framework.Call[json.RawMessage](ts.API, "explorer_getTransactionList")
-	if err != nil {
-		t.Fatalf("getTransactionList failed: %v", err)
-	}
-
-	if len(txList) == 0 || string(txList) == "null" {
-		t.Fatal("getTransactionList returned empty")
-	}
-
-	// test transaction by hash
-	txDetail, err := framework.Call[json.RawMessage](ts.API, "explorer_getTransactionByHash", receipt.TxHash.Hex())
-	if err != nil {
-		t.Fatalf("getTransactionByHash failed: %v", err)
-	}
-
-	if string(txDetail) == "null" {
-		t.Fatal("getTransactionByHash returned null")
-	}
-
-	// test block transaction count
-	txCount, err := framework.Call[json.RawMessage](ts.API, "explorer_getBlockTransactionCount", fmt.Sprintf("%d", receipt.BlockNumber.Uint64()))
-	if err != nil {
-		t.Fatalf("getBlockTransactionCount failed: %v", err)
-	}
-
-	t.Logf("block %d tx count: %s", receipt.BlockNumber.Uint64(), string(txCount))
-
-	// test watchlist via admin API
-	ts.API.AddERC20ToWatchlist(receiverAddress.Hex(), "TTK", 18, ts.Config.API.AdminSecret)
-
-	watchlist, err := framework.Call[json.RawMessage](ts.API, "explorer_getErc20Watchlist")
-	if err != nil {
-		t.Fatalf("getErc20Watchlist failed: %v", err)
-	}
-
-	if string(watchlist) == "null" || string(watchlist) == "[]" {
-		t.Fatal("watchlist empty after adding token")
-	}
-
-	t.Logf("watchlist: %s", string(watchlist))
-
-	// test remove from watchlist
-	ts.API.RemoveERC20FromWatchlist(receiverAddress.Hex(), ts.Config.API.AdminSecret)
-
-	// test unknown method
-	_, err = framework.Call[json.RawMessage](ts.API, "explorer_nonExistent")
-	if err == nil {
-		t.Fatal("expected error for unknown method")
-	}
-
-	t.Log("all API tests passed")
-}
-
 func TestE2E_explorer_getBlockList(t *testing.T) {
 	const numAccounts = 10
 
 	keys := make([]*ecdsa.PrivateKey, numAccounts)
 	premineAddresses := make([]string, numAccounts)
 	receipts := make([]*types.Receipt, 0)
+
 	var mu sync.Mutex
 
 	for i := 0; i < numAccounts; i++ {
@@ -182,7 +75,9 @@ func TestE2E_explorer_getBlockList(t *testing.T) {
 					amount)
 
 				mu.Lock()
+
 				receipts = append(receipts, receipt)
+
 				mu.Unlock()
 
 				time.Sleep(time.Second * time.Duration(rand.IntN(6)))
@@ -195,6 +90,7 @@ func TestE2E_explorer_getBlockList(t *testing.T) {
 	t.Log("all transactions have been sent")
 
 	var maxBlockNumber uint64 = 0
+
 	for _, receipt := range receipts {
 		if receipt.BlockNumber.Uint64() > maxBlockNumber {
 			maxBlockNumber = receipt.BlockNumber.Uint64()
@@ -252,6 +148,7 @@ func TestE2E_explorer_getBlockList(t *testing.T) {
 
 	// Collect blocks with transactions from our receipt map.
 	expectedBlocksWithTxn := map[uint64]struct{}{}
+
 	for bn, receiptsInBlock := range blockReceipts {
 		if len(receiptsInBlock) > 0 {
 			expectedBlocksWithTxn[bn] = struct{}{}
@@ -522,7 +419,9 @@ func TestE2E_explorer_getLineData(t *testing.T) {
 				big.NewInt(10))
 
 			mu.Lock()
+
 			receipts = append(receipts, receipt)
+
 			mu.Unlock()
 		}()
 	}
@@ -675,7 +574,9 @@ func TestE2E_explorer_getTransactionList(t *testing.T) {
 					big.NewInt(10))
 
 				mu.Lock()
+
 				receipts = append(receipts, receipt)
+
 				mu.Unlock()
 			}
 		}()
@@ -842,6 +743,7 @@ func TestE2E_explorer_getTransactionList(t *testing.T) {
 	}
 
 	expectedInBlock := 0
+
 	for _, r := range receipts {
 		if r.BlockNumber.Int64() == targetBlock {
 			expectedInBlock++
@@ -1019,7 +921,8 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 
 	t.Log("sending transactions...")
 
-	var receipts []*types.Receipt
+	var receipts = make([]*types.Receipt, 0, 3)
+
 	pk1Hex := fmt.Sprintf("%x", crypto.FromECDSA(pk1))
 
 	// 1. Native token transfer
@@ -1164,18 +1067,23 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 			receiptMint.BlockNumber.Int64(),
 			txMint.BlockNumber)
 	}
+
 	if strings.ToLower(txMint.Hash) != strings.ToLower(receiptMint.TxHash.Hex()) {
 		t.Fatalf("Mint: Hash mismatch: expected %s, got %s", receiptMint.TxHash.Hex(), txMint.Hash)
 	}
+
 	if strings.ToLower(txMint.From) != strings.ToLower(addr1) {
 		t.Fatalf("Mint: From mismatch: expected %s, got %s", addr1, txMint.From)
 	}
+
 	if strings.ToLower(txMint.To) != strings.ToLower(erc20Address.Hex()) {
 		t.Fatalf("Mint: To mismatch: expected contract %s, got %s", erc20Address.Hex(), txMint.To)
 	}
+
 	if txMint.ID <= 0 {
 		t.Fatalf("Mint: invalid ID: %d", txMint.ID)
 	}
+
 	if txMint.Timestamp <= 0 {
 		t.Fatalf("Mint: invalid Timestamp: %d", txMint.Timestamp)
 	}
@@ -1192,6 +1100,7 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 	t.Log("checking non-existent hash...")
 
 	nonExistentHash := "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+
 	_, err = framework.Call[api_storage.TransactionListItem](
 		ts.API,
 		"explorer_getTransactionByHash",
@@ -1260,7 +1169,9 @@ func TestE2E_explorer_getBlockTransactionCount(t *testing.T) {
 				big.NewInt(10))
 
 			mu.Lock()
+
 			receipts = append(receipts, receipt)
+
 			mu.Unlock()
 		}()
 	}
@@ -2214,6 +2125,7 @@ func TestE2E_OnboardingEntityDailyStatsAPI(t *testing.T) {
 				for _, item := range resp.Data.List {
 					if item.Count > 0 {
 						hasOnboarding = true
+
 						break
 					}
 				}

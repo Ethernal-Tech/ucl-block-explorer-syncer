@@ -161,9 +161,9 @@ func (fw *TestCluster) initLogsDir() {
 	parent := name
 	sub := ""
 
-	if idx := strings.Index(name, "/"); idx != -1 {
-		parent = name[:idx]
-		sub = name[idx+1:]
+	if p, s, ok := strings.Cut(name, "/"); ok {
+		parent = p
+		sub = s
 	}
 
 	dir := filepath.Join("../e2e-logs", fmt.Sprintf("%s-%d", parent, time.Now().UTC().UnixMilli()))

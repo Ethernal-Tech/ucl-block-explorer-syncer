@@ -65,12 +65,12 @@ func (a *API) Stop() {
 		return
 	}
 
-	syscall.Kill(-a.node.cmd.Process.Pid, syscall.SIGTERM)
+	syscall.Kill(-a.node.cmd.Process.Pid, syscall.SIGTERM) //nolint:errcheck
 
 	select {
 	case <-a.node.Wait():
 	case <-time.After(10 * time.Second):
-		syscall.Kill(-a.node.cmd.Process.Pid, syscall.SIGKILL)
+		syscall.Kill(-a.node.cmd.Process.Pid, syscall.SIGKILL) //nolint:errcheck
 	}
 }
 
@@ -87,7 +87,7 @@ func (a *API) waitReady(timeout time.Duration) {
 	for time.Now().UTC().Before(deadline) {
 		resp, err := http.Get(a.URL())
 		if err == nil {
-			resp.Body.Close()
+			resp.Body.Close() //nolint:errcheck
 			a.t.Log("api ready")
 
 			return
@@ -124,7 +124,7 @@ func (a *API) AddERC20ToWatchlist(address, symbol string, decimals int, secret s
 	if err != nil {
 		a.t.Fatalf("failed to add erc20 to watchlist: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -188,7 +188,7 @@ func (a *API) UpsertValidator(address, name, institution, region, secret string)
 	if err != nil {
 		a.t.Fatalf("failed to upsert validator: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -210,7 +210,7 @@ func (a *API) DeleteValidator(address, secret string) {
 	if err != nil {
 		a.t.Fatalf("failed to delete validator: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -244,7 +244,7 @@ func (a *API) CreateAssetIssuer(name, website, contact, region, secret string, a
 	if err != nil {
 		a.t.Fatalf("failed to create asset issuer: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -289,7 +289,7 @@ func (a *API) UpdateAssetIssuer(id, name, website, contact, region, secret strin
 	if err != nil {
 		a.t.Fatalf("failed to update asset issuer: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -311,7 +311,7 @@ func (a *API) DeleteAssetIssuer(id, secret string) {
 	if err != nil {
 		a.t.Fatalf("failed to delete asset issuer: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -340,7 +340,7 @@ func Call[T any](a *API, method string, params ...interface{}) (T, error) {
 	if err != nil {
 		return zero, fmt.Errorf("failed to call %s: %w", method, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
