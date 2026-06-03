@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/big"
 	"math/rand/v2"
 	"strconv"
@@ -20,6 +21,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+const unknownFunctionName = "unknown"
 
 func TestE2E_explorer_getBlockList(t *testing.T) {
 	const numAccounts = 10
@@ -1000,7 +1003,7 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 		t.Fatalf("Transfer: Data is not empty: %s", txTransfer.Data)
 	}
 
-	if txTransfer.Metadata.FunctionName != "unknown" {
+	if txTransfer.Metadata.FunctionName != unknownFunctionName {
 		t.Fatalf("Transfer: Metadata FunctionName is not unknown")
 	}
 
@@ -1047,7 +1050,7 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 		t.Fatalf("Deploy: invalid Data: %s", txDeploy.Data)
 	}
 
-	if txDeploy.Metadata.FunctionName != "unknown" {
+	if txDeploy.Metadata.FunctionName != unknownFunctionName {
 		t.Fatalf("Deploy: Metadata FunctionName is not unknown")
 	}
 
@@ -1092,7 +1095,7 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 		t.Fatalf("Mint: expected input data to be present, got empty string")
 	}
 
-	if txMint.Metadata.FunctionName == "unknown" || txMint.Metadata.FunctionName == "" {
+	if txMint.Metadata.FunctionName == unknownFunctionName || txMint.Metadata.FunctionName == "" {
 		t.Fatalf("Mint: expected FunctionName to be resolved (e.g. mint), got %s",
 			txMint.Metadata.FunctionName)
 	}
@@ -1537,7 +1540,6 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 
 	ts.Start()
 
-	// deploy ERC20 and add to watchlist
 	receipt := ts.UCL.DeployERC20(pkSenderStr)
 	if receipt.Status != 1 {
 		t.Fatal("failed to deploy erc20")
@@ -1552,11 +1554,15 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 
 	ts.API.AddERC20ToWatchlist(contractAddr.Hex(), "TTK", 18, ts.Config.API.AdminSecret)
 
-	// generate activity - mints grow circulation, burns shrink it
-	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(10000000))
-	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(5000000))
-	ts.UCL.BurnERC20(pkSenderStr, contractAddr, big.NewInt(2000000))
-	lastReceipt := ts.UCL.TransferERC20(pkSenderStr, contractAddr, receiverAddress, big.NewInt(1000000))
+	mint1Amount := big.NewInt(10000000)
+	mint2Amount := big.NewInt(5000000)
+	burnAmount := big.NewInt(2000000)
+	transferAmount := big.NewInt(1000000)
+
+	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, mint1Amount)
+	ts.UCL.MintERC20(pkSenderStr, contractAddr, receiverAddress, mint2Amount)
+	ts.UCL.BurnERC20(pkSenderStr, contractAddr, burnAmount)
+	lastReceipt := ts.UCL.TransferERC20(pkSenderStr, contractAddr, receiverAddress, transferAmount)
 
 	t.Log("erc20 operations done")
 
@@ -1564,10 +1570,56 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// pre-calculate expected circulation
+	decimals := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	constructorMintRaw := new(big.Int).Mul(big.NewInt(1000), decimals)
+
+	expectedRaw := new(big.Int).Set(constructorMintRaw)
+	expectedRaw.Add(expectedRaw, mint1Amount)
+	expectedRaw.Add(expectedRaw, mint2Amount)
+	expectedRaw.Sub(expectedRaw, burnAmount)
+
+	expectedCirculation := new(big.Float).Quo(
+		new(big.Float).SetInt(expectedRaw),
+		new(big.Float).SetInt(decimals),
+	)
+
+	tolerance, _ := new(big.Float).SetString("0.0001")
+
 	today := time.Now().UTC().Format("2006-01-02")
 	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
 	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
 	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	// helpers
+	findNonZeroTotal := func(list []api_storage.Erc20CirculationCumulativeRow) string {
+		for i := len(list) - 1; i >= 0; i-- {
+			if list[i].Total != "" && list[i].Total != "0" {
+				return list[i].Total
+			}
+		}
+
+		return ""
+	}
+
+	checkCirculationMatchesExpected := func(t *testing.T, total string) {
+		t.Helper()
+
+		if total == "" || total == "0" {
+			t.Fatal("expected non-zero circulation")
+		}
+
+		actual, _, err := big.ParseFloat(total, 10, 256, big.ToNearestEven)
+		if err != nil {
+			t.Fatalf("failed to parse total: %v", err)
+		}
+
+		diff := new(big.Float).Abs(new(big.Float).Sub(actual, expectedCirculation))
+		if diff.Cmp(tolerance) > 0 {
+			t.Fatalf("circulation mismatch: expected %s, got %s",
+				expectedCirculation.Text('f', 18), actual.Text('f', 18))
+		}
+	}
 
 	tests := []struct {
 		name  string
@@ -1589,11 +1641,9 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 					t.Fatal("expected at least one daily circulation entry")
 				}
 
-				for _, item := range resp.Data.List {
-					if item.Total == "" || item.Total == "0" {
-						t.Fatal("expected non-zero circulation after mints")
-					}
-				}
+				total := findNonZeroTotal(resp.Data.List)
+				checkCirculationMatchesExpected(t, total)
+				t.Logf("daily circulation verified: %s", total)
 			},
 		},
 		{
@@ -1612,19 +1662,9 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 					t.Fatal("expected hourly circulation entries")
 				}
 
-				hasNonZero := false
-
-				for _, item := range resp.Data.List {
-					if item.Total != "" && item.Total != "0" {
-						hasNonZero = true
-
-						break
-					}
-				}
-
-				if !hasNonZero {
-					t.Fatal("expected at least one non-zero hourly circulation")
-				}
+				total := findNonZeroTotal(resp.Data.List)
+				checkCirculationMatchesExpected(t, total)
+				t.Logf("hourly entries: %d, last non-zero: %s", len(resp.Data.List), total)
 			},
 		},
 		{
@@ -1643,11 +1683,9 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 					t.Fatal("expected monthly circulation entry")
 				}
 
-				for _, item := range resp.Data.List {
-					if item.Total == "" || item.Total == "0" {
-						t.Fatal("expected non-zero monthly circulation")
-					}
-				}
+				total := findNonZeroTotal(resp.Data.List)
+				checkCirculationMatchesExpected(t, total)
+				t.Logf("monthly circulation verified: %s", total)
 			},
 		},
 		{
@@ -1662,12 +1700,15 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 				t.Helper()
 
 				if len(resp.Data.List) == 0 {
-					t.Fatal("expected circulation data for UTC range")
+					t.Fatal("expected data for UTC range")
 				}
+
+				total := findNonZeroTotal(resp.Data.List)
+				checkCirculationMatchesExpected(t, total)
 			},
 		},
 		{
-			name: "far past date range - should be empty",
+			name: "far past - should have no activity",
 			req: &api_storage.Erc20CirculationCumulativeRequest{
 				FromDay:  "2020-01-01",
 				ToDay:    "2020-01-02",
@@ -1677,10 +1718,9 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
 				t.Helper()
 
-				for _, item := range resp.Data.List {
-					if item.Total != "" && item.Total != "0" {
-						t.Fatal("expected no circulation data for past range")
-					}
+				total := findNonZeroTotal(resp.Data.List)
+				if total != "" {
+					t.Fatalf("expected no circulation for past range, got %s", total)
 				}
 			},
 		},
@@ -1701,29 +1741,58 @@ func TestE2E_ERC20CirculationCumulativeAPI(t *testing.T) {
 			},
 		},
 		{
-			name: "circulation reflects mints minus burns",
+			name: "circulation matches DB raw values",
 			req: &api_storage.Erc20CirculationCumulativeRequest{
-				Granularity: "day",
-				FromDay:     today,
-				ToDay:       tomorrow,
-				Page:        1,
-				PageSize:    50,
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
 			},
 			check: func(t *testing.T, resp api_storage.Erc20CirculationCumulativeResponse) {
 				t.Helper()
 
-				if len(resp.Data.List) == 0 {
-					t.Fatal("expected circulation data")
+				apiTotal := findNonZeroTotal(resp.Data.List)
+				if apiTotal == "" {
+					t.Fatal("expected non-zero circulation")
 				}
 
-				// last entry should reflect cumulative: minted 15M, burned 2M = 13M tokens
-				// in human units that's 13M / 10^18, but depends on how endpoint formats
-				last := resp.Data.List[len(resp.Data.List)-1]
-				t.Logf("last circulation total: %s", last.Total)
-
-				if last.Total == "" || last.Total == "0" {
-					t.Fatal("expected positive circulation")
+				actual, _, err := big.ParseFloat(apiTotal, 10, 256, big.ToNearestEven)
+				if err != nil {
+					t.Fatalf("failed to parse: %v", err)
 				}
+
+				// verify against expected from operations
+				checkCirculationMatchesExpected(t, apiTotal)
+
+				// verify against DB raw values
+				stats := ts.DB.GetERC20TokensHourlyStatsFromDB(context.TODO())
+
+				tokenStats, exists := stats[contractAddr.Hex()]
+				if !exists {
+					t.Fatal("token not found in DB stats")
+				}
+
+				var dbTotalMintRaw, dbTotalBurnRaw big.Int
+
+				for _, s := range tokenStats {
+					dbTotalMintRaw.Add(&dbTotalMintRaw, s.MintVolumeRaw)
+					dbTotalBurnRaw.Add(&dbTotalBurnRaw, s.BurnVolumeRaw)
+				}
+
+				dbCirculationRaw := new(big.Int).Sub(&dbTotalMintRaw, &dbTotalBurnRaw)
+				dbCirculation := new(big.Float).Quo(
+					new(big.Float).SetInt(dbCirculationRaw),
+					new(big.Float).SetInt(decimals),
+				)
+
+				dbDiff := new(big.Float).Abs(new(big.Float).Sub(actual, dbCirculation))
+				if dbDiff.Cmp(tolerance) > 0 {
+					t.Fatalf("API (%s) != DB (%s)",
+						actual.Text('f', 18), dbCirculation.Text('f', 18))
+				}
+
+				t.Logf("verified: expected=%s api=%s db=%s",
+					expectedCirculation.Text('f', 18), actual.Text('f', 18), dbCirculation.Text('f', 18))
 			},
 		},
 	}
@@ -2253,10 +2322,8 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 
 	ts.Start()
 
-	// generate transactions to create gas usage
-	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000000))
-	ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000000))
-
+	receipt1 := ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000000))
+	receipt2 := ts.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(2000000))
 	deployReceipt := ts.UCL.DeployERC20(pkSenderStr)
 	lastReceipt := ts.UCL.MintERC20(pkSenderStr, deployReceipt.ContractAddress, receiverAddress, big.NewInt(5000000))
 
@@ -2266,20 +2333,104 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// get a validator address from blocks
-	var validatorAddr string
-
-	err = ts.DB.Conn().QueryRow("SELECT miner FROM chain.blocks WHERE number > 0 LIMIT 1").Scan(&validatorAddr)
-	if err != nil {
-		t.Fatalf("failed to get validator address: %v", err)
-	}
-
+	validatorAddr, _ := ts.DB.GetBlockMinerAndGas(1)
 	t.Logf("validator address: %s", validatorAddr)
 
 	today := time.Now().UTC().Format("2006-01-02")
 	tomorrow := time.Now().UTC().AddDate(0, 0, 1).Format("2006-01-02")
 	thisMonth := time.Now().UTC().Format("2006-01") + "-01"
 	nextMonth := time.Now().UTC().AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	checkBlockCountAndGas := func(t *testing.T, list []api_storage.ValidatorUtilizationRow) {
+		t.Helper()
+
+		dbBlockCount := int64(ts.DB.GetBlockCount() - 1)
+		dbGasTotal := ts.DB.GetTotalGasUsed()
+
+		var apiBlockCount int64
+
+		var apiGasTotal uint64
+
+		for _, item := range list {
+			apiBlockCount += item.BlockCount
+
+			gas, err := strconv.ParseUint(item.GasUsedTotal, 10, 64)
+			if err != nil {
+				t.Fatalf("failed to parse gas: %v", err)
+			}
+
+			apiGasTotal += gas
+		}
+
+		if apiBlockCount != dbBlockCount {
+			t.Fatalf("block count mismatch: db=%d api=%d", dbBlockCount, apiBlockCount)
+		}
+
+		if apiGasTotal != dbGasTotal {
+			t.Fatalf("total gas mismatch: db=%d api=%d", dbGasTotal, apiGasTotal)
+		}
+
+		t.Logf("verified: %d blocks, %d total gas", apiBlockCount, apiGasTotal)
+	}
+
+	checkValidatorStats := func(t *testing.T, item api_storage.ValidatorUtilizationRow, addr string) {
+		t.Helper()
+
+		if item.ValidatorAddress != addr {
+			t.Fatalf("expected validator %s, got %s", addr, item.ValidatorAddress)
+		}
+
+		dbGas, _, dbBlocks := ts.DB.GetValidatorStats(addr)
+
+		apiGas, err := strconv.ParseUint(item.GasUsedTotal, 10, 64)
+		if err != nil {
+			t.Fatalf("failed to parse gas: %v", err)
+		}
+
+		if apiGas != dbGas {
+			t.Fatalf("validator %s gas mismatch: db=%d api=%d", addr, dbGas, apiGas)
+		}
+
+		if item.BlockCount != dbBlocks {
+			t.Fatalf("validator %s block count mismatch: db=%d api=%d", addr, dbBlocks, item.BlockCount)
+		}
+
+		t.Logf("validator %s: blocks=%d gas=%d utilization=%s%%",
+			addr, dbBlocks, dbGas, item.UtilizationPct)
+	}
+
+	checkUtilizationPct := func(t *testing.T, list []api_storage.ValidatorUtilizationRow) {
+		t.Helper()
+
+		for _, item := range list {
+			gasUsed, err := strconv.ParseFloat(item.GasUsedTotal, 64)
+			if err != nil {
+				t.Fatalf("failed to parse gas used: %v", err)
+			}
+
+			gasLimit, err := strconv.ParseFloat(item.GasLimitTotal, 64)
+			if err != nil {
+				t.Fatalf("failed to parse gas limit: %v", err)
+			}
+
+			if gasLimit == 0 {
+				continue
+			}
+
+			expectedPct := (gasUsed / gasLimit) * 100
+
+			actualPct, err := strconv.ParseFloat(item.UtilizationPct, 64)
+			if err != nil {
+				t.Fatalf("failed to parse utilization pct: %v", err)
+			}
+
+			diff := math.Abs(expectedPct - actualPct)
+			if diff > 0.01 {
+				t.Fatalf("validator %s utilization mismatch: calculated=%.4f%% api=%s%%",
+					item.ValidatorAddress, expectedPct, item.UtilizationPct)
+			}
+		}
+	}
 
 	tests := []struct {
 		name  string
@@ -2301,19 +2452,13 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 					t.Fatal("expected at least one utilization entry")
 				}
 
-				hasGasUsed := false
-
 				for _, item := range resp.Data.List {
-					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
-						hasGasUsed = true
-
-						break
+					if item.BucketUtc != today {
+						t.Fatalf("expected bucket %s, got %s", today, item.BucketUtc)
 					}
 				}
 
-				if !hasGasUsed {
-					t.Fatal("expected non-zero gas usage from transactions")
-				}
+				checkBlockCountAndGas(t, resp.Data.List)
 			},
 		},
 		{
@@ -2332,19 +2477,8 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 					t.Fatal("expected hourly utilization stats")
 				}
 
-				hasGasUsed := false
-
-				for _, item := range resp.Data.List {
-					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
-						hasGasUsed = true
-
-						break
-					}
-				}
-
-				if !hasGasUsed {
-					t.Fatal("expected non-zero hourly gas usage")
-				}
+				checkBlockCountAndGas(t, resp.Data.List)
+				checkUtilizationPct(t, resp.Data.List)
 			},
 		},
 		{
@@ -2362,6 +2496,8 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 				if len(resp.Data.List) == 0 {
 					t.Fatal("expected monthly utilization stats")
 				}
+
+				checkBlockCountAndGas(t, resp.Data.List)
 			},
 		},
 		{
@@ -2377,14 +2513,10 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 				t.Helper()
 
 				if len(resp.Data.List) == 0 {
-					t.Fatal("expected utilization for specific validator")
+					t.Fatal("expected at least one result for validator")
 				}
 
-				for _, item := range resp.Data.List {
-					if item.ValidatorAddress != "" && item.ValidatorAddress != validatorAddr {
-						t.Fatalf("expected validator %s, got %s", validatorAddr, item.ValidatorAddress)
-					}
-				}
+				checkValidatorStats(t, resp.Data.List[0], validatorAddr)
 			},
 		},
 		{
@@ -2399,15 +2531,13 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
 				t.Helper()
 
-				for _, item := range resp.Data.List {
-					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
-						t.Fatal("expected no utilization for non-existent validator")
-					}
+				if len(resp.Data.List) != 0 {
+					t.Fatalf("expected empty list, got %d", len(resp.Data.List))
 				}
 			},
 		},
 		{
-			name: "UTC range",
+			name: "UTC range matches day range",
 			req: &api_storage.ValidatorUtilizationRequest{
 				FromUtc:  today + "T00:00:00Z",
 				ToUtc:    tomorrow + "T00:00:00Z",
@@ -2417,8 +2547,29 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
 				t.Helper()
 
-				if len(resp.Data.List) == 0 {
-					t.Fatal("expected utilization for UTC range")
+				dayResp, err := framework.Call[api_storage.ValidatorUtilizationResponse](
+					ts.API, "explorer_getValidatorUtilization", &api_storage.ValidatorUtilizationRequest{
+						FromDay:  today,
+						ToDay:    tomorrow,
+						Page:     1,
+						PageSize: 50,
+					})
+				if err != nil {
+					t.Fatalf("failed to get daily for comparison: %v", err)
+				}
+
+				if len(resp.Data.List) != len(dayResp.Data.List) {
+					t.Fatalf("UTC count (%d) != day count (%d)",
+						len(resp.Data.List), len(dayResp.Data.List))
+				}
+
+				for i := range resp.Data.List {
+					if resp.Data.List[i].GasUsedTotal != dayResp.Data.List[i].GasUsedTotal {
+						t.Fatalf("validator %s: UTC gas (%s) != day gas (%s)",
+							resp.Data.List[i].ValidatorAddress,
+							resp.Data.List[i].GasUsedTotal,
+							dayResp.Data.List[i].GasUsedTotal)
+					}
 				}
 			},
 		},
@@ -2433,10 +2584,8 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
 				t.Helper()
 
-				for _, item := range resp.Data.List {
-					if item.GasUsedTotal != "0" && item.GasUsedTotal != "" {
-						t.Fatal("expected no utilization for past range")
-					}
+				if len(resp.Data.List) != 0 {
+					t.Fatalf("expected empty list, got %d", len(resp.Data.List))
 				}
 			},
 		},
@@ -2451,9 +2600,15 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
 				t.Helper()
 
-				if len(resp.Data.List) > 1 {
-					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				if len(resp.Data.List) != 1 {
+					t.Fatalf("expected exactly 1 result, got %d", len(resp.Data.List))
 				}
+
+				if resp.Data.Total < 2 {
+					t.Fatalf("expected total >= 2 validators, got %d", resp.Data.Total)
+				}
+
+				t.Logf("page 1 of %d total validators", resp.Data.Total)
 			},
 		},
 		{
@@ -2470,12 +2625,67 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 				t.Helper()
 
 				if len(resp.Data.List) == 0 {
-					t.Fatal("expected hourly utilization for validator")
+					t.Fatal("expected at least one hourly entry for validator")
 				}
 
-				for _, item := range resp.Data.List {
-					t.Logf("validator %s: gasUsed=%s gasLimit=%s utilization=%s%%",
-						item.ValidatorAddress, item.GasUsedTotal, item.GasLimitTotal, item.UtilizationPct)
+				checkValidatorStats(t, resp.Data.List[0], validatorAddr)
+				checkUtilizationPct(t, resp.Data.List)
+			},
+		},
+		{
+			name: "utilization matches per-transaction blocks",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				txBlocks := []uint64{
+					receipt1.BlockNumber.Uint64(),
+					receipt2.BlockNumber.Uint64(),
+					deployReceipt.BlockNumber.Uint64(),
+					lastReceipt.BlockNumber.Uint64(),
+				}
+
+				expectedPerValidator := map[string]uint64{}
+
+				for _, blockNum := range txBlocks {
+					miner, gasUsed := ts.DB.GetBlockMinerAndGas(blockNum)
+					expectedPerValidator[miner] += gasUsed
+					t.Logf("block %d: miner=%s gasUsed=%d", blockNum, miner, gasUsed)
+				}
+
+				for validator, expectedGas := range expectedPerValidator {
+					found := false
+
+					for _, item := range resp.Data.List {
+						if item.ValidatorAddress == validator {
+							found = true
+
+							apiGas, err := strconv.ParseUint(item.GasUsedTotal, 10, 64)
+							if err != nil {
+								t.Fatalf("failed to parse gas: %v", err)
+							}
+
+							if apiGas < expectedGas {
+								t.Fatalf("validator %s: API gas (%d) < tx blocks gas (%d)",
+									validator, apiGas, expectedGas)
+							}
+
+							t.Logf("validator %s: txBlocksGas=%d apiTotalGas=%d",
+								validator, expectedGas, apiGas)
+
+							break
+						}
+					}
+
+					if !found {
+						t.Fatalf("validator %s not found in API response", validator)
+					}
 				}
 			},
 		},

@@ -120,7 +120,7 @@ func (a *API) AddERC20ToWatchlist(address, symbol string, decimals int, secret s
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to add erc20 to watchlist: %v", err)
 	}
@@ -151,7 +151,7 @@ func (a *API) RemoveERC20FromWatchlist(address, secret string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to remove erc20 from watchlist: %v", err)
 	}
@@ -184,7 +184,7 @@ func (a *API) UpsertValidator(address, name, institution, region, secret string)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to upsert validator: %v", err)
 	}
@@ -206,7 +206,7 @@ func (a *API) DeleteValidator(address, secret string) {
 
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to delete validator: %v", err)
 	}
@@ -240,7 +240,7 @@ func (a *API) CreateAssetIssuer(name, website, contact, region, secret string, a
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to create asset issuer: %v", err)
 	}
@@ -285,7 +285,7 @@ func (a *API) UpdateAssetIssuer(id, name, website, contact, region, secret strin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to update asset issuer: %v", err)
 	}
@@ -307,7 +307,7 @@ func (a *API) DeleteAssetIssuer(id, secret string) {
 
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req) //nolint:gosec
 	if err != nil {
 		a.t.Fatalf("failed to delete asset issuer: %v", err)
 	}

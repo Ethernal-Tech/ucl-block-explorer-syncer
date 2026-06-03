@@ -502,3 +502,37 @@ func (d *DB) WaitForERC20Block(address common.Address, maxBlock uint64, timeout 
 
 	return fmt.Errorf("timeout: erc20 syncer did not process up to block %d within %s", maxBlock, timeout)
 }
+
+func (d *DB) GetTotalGasUsed() uint64 {
+	var total uint64
+
+	err := d.conn.QueryRow("SELECT COALESCE(SUM(gas_used), 0) FROM chain.blocks WHERE number > 0").Scan(&total)
+	if err != nil {
+		d.t.Fatalf("failed to query total gas: %s", err)
+	}
+
+	return total
+}
+
+func (d *DB) GetValidatorStats(validator string) (gasUsed uint64, gasLimit uint64, blockCount int64) {
+	err := d.conn.QueryRow(`
+		SELECT COALESCE(SUM(gas_used), 0), COALESCE(SUM(gas_limit), 0), COUNT(*)
+		FROM chain.blocks WHERE miner = $1 AND number > 0
+	`, validator).Scan(&gasUsed, &gasLimit, &blockCount)
+	if err != nil {
+		d.t.Fatalf("failed to query validator stats: %s", err)
+	}
+
+	return
+}
+
+func (d *DB) GetBlockMinerAndGas(blockNumber uint64) (miner string, gasUsed uint64) {
+	err := d.conn.QueryRow(`
+		SELECT miner, gas_used FROM chain.blocks WHERE number = $1
+	`, blockNumber).Scan(&miner, &gasUsed)
+	if err != nil {
+		d.t.Fatalf("failed to query block %d: %s", blockNumber, err)
+	}
+
+	return
+}

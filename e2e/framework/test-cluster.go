@@ -127,6 +127,7 @@ func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 	sigCh := make(chan os.Signal, 1)
 
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
 	go func() {
 		<-sigCh
 		fw.Stop()
