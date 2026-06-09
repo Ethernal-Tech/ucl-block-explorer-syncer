@@ -22,6 +22,7 @@ var (
 	apiChainID        uint64
 	apiVersion        string
 	apiAdminAPISecret string
+	apiNodeRPC        string
 )
 
 var apiCommand = &cobra.Command{
@@ -54,6 +55,8 @@ func init() {
 		"value for GET / JSON field \"version\"")
 	apiCommand.Flags().StringVar(&apiAdminAPISecret, "admin-api-secret", "",
 		"Bearer token for POST /admin/v1/erc20/watchlist (default: ADMIN_API_SECRET env)")
+	apiCommand.Flags().StringVar(&apiNodeRPC, "node-rpc", "",
+		"polygon-edge JSON-RPC URL for contract verification (e.g. http://localhost:10002)")
 	_ = apiCommand.MarkFlagRequired("db-conn")
 }
 
@@ -89,6 +92,7 @@ func runAPI(cmd *cobra.Command, args []string) error {
 		Version:        apiVersion,
 		DB:             db,
 		AdminAPISecret: adminSecret,
+		NodeRPC:        apiNodeRPC,
 	})
 
 	log.Printf("explorer API listening on %s (POST / JSON-RPC; GET / metadata — polygon-edge compatible)", apiListen)
