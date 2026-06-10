@@ -138,3 +138,9 @@ CREATE TABLE IF NOT EXISTS chain.asset_issuer_tokens (
     PRIMARY KEY (issuer_id, token_address),
     UNIQUE (token_address)
 );
+
+CREATE TABLE IF NOT EXISTS chain.esg_state (
+    time_at TIMESTAMP PRIMARY KEY NOT NULL,
+    total_lbm_carbon_emissions NUMERIC(78, 6) NOT NULL DEFAULT 0,
+    total_mbm_carbon_emissions NUMERIC(78, 6) NOT NULL DEFAULT 0
+);

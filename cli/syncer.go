@@ -6,9 +6,11 @@ import (
 
 	eoaactivitybackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/eoa_activity_backend"
 	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
+	esgaggregationbackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/esg_aggregation_backend"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/storage_handler"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +32,10 @@ var (
 	eoaActivityStats            bool
 	eoaActivityProcessInterval  uint64
 	circulationPollInterval     uint64
+
+	esgAggregationStats        bool
+	esgAggregationPollInterval uint64
+	configPath                 string
 )
 
 var syncerCommand = &cobra.Command{
@@ -99,9 +105,22 @@ func setOptionalFlags() {
 
 	syncerCommand.Flags().Uint64Var(&circulationPollInterval, "circulation-poll-interval", 0,
 		"interval in milliseconds between circulation polls")
+
+	syncerCommand.Flags().BoolVar(&esgAggregationStats, "esg-aggregation-stats", false,
+		"enable ESG aggregation tracking")
+
+	syncerCommand.Flags().Uint64Var(&esgAggregationPollInterval, "esg-aggregation-poll-interval", 86400000,
+		"how often the syncer polls for new ESG aggregation data, in milliseconds")
+
+	syncerCommand.Flags().StringVar(&configPath, "config", "", "path to JSON config file")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
+	config, err := utils.LoadConfig(configPath)
+	if err != nil {
+		return err
+	}
+
 	db, err := sql.Open("postgres", connString)
 	if err != nil {
 		return fmt.Errorf("cannot open postgres db: %w", err)
@@ -188,6 +207,20 @@ func execute(cmd *cobra.Command, args []string) error {
 
 		opts = append(opts, syncer.WithEoaActivityStats(backend),
 			syncer.WithEoaActivityProcessInterval(eoaActivityProcessInterval))
+	}
+
+	if esgAggregationStats {
+		var esgCfg *utils.ESGAggregationBackendConfig
+		if config != nil && config.Syncer != nil && config.Syncer.ESG != nil {
+			esgCfg = config.Syncer.ESG
+		} else {
+			esgCfg = &utils.ESGAggregationBackendConfig{} // by default all filters are nil
+		}
+
+		backend := esgaggregationbackend.NewESGAggregationBackend(db, esgCfg)
+
+		opts = append(opts, syncer.WithEsgAggregationStats(backend),
+			syncer.WithESGAggregationPollInterval(esgAggregationPollInterval))
 	}
 
 	if syn, err := syncer.NewSyncer(rpcUrl, sh, opts...); err == nil {
