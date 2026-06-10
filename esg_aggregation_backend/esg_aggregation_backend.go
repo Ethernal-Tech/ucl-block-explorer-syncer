@@ -17,8 +17,8 @@ import (
 )
 
 type dbItem struct {
-	totalLMBCarbonEmissions float64
-	totalMBMCarbonEmissions float64
+	TotalLBMCarbonEmissions float64
+	TotalMBMCarbonEmissions float64
 }
 
 type ESGAggregationBackend struct {
@@ -33,7 +33,9 @@ func NewESGAggregationBackend(db *sql.DB, config *utils.ESGAggregationBackendCon
 	}
 }
 
-func (b *ESGAggregationBackend) Process(logger func(string, ...any)) (done bool, wait bool, err error) {
+func (b *ESGAggregationBackend) Process(
+	ctx context.Context, logger func(string, ...any),
+) (done bool, wait bool, err error) {
 	logger("Executing ESG aggregation...")
 
 	lastUnix, err := b.getLast()
@@ -41,10 +43,7 @@ func (b *ESGAggregationBackend) Process(logger func(string, ...any)) (done bool,
 		return false, false, fmt.Errorf("failed to get last processed time: %w", err)
 	}
 
-	var (
-		ctx       = context.TODO()
-		startTime time.Time
-	)
+	var startTime time.Time
 
 	// Compute current month start and its end (start of next month)
 	now := time.Now().UTC()
@@ -131,8 +130,8 @@ func (b *ESGAggregationBackend) saveToDb(
 		old := values[time]
 
 		values[time] = dbItem{
-			totalLMBCarbonEmissions: lbm + old.totalLMBCarbonEmissions,
-			totalMBMCarbonEmissions: mbm + old.totalMBMCarbonEmissions,
+			TotalLBMCarbonEmissions: lbm + old.TotalLBMCarbonEmissions,
+			TotalMBMCarbonEmissions: mbm + old.TotalMBMCarbonEmissions,
 		}
 	}
 
@@ -153,7 +152,7 @@ func (b *ESGAggregationBackend) saveToDb(
 			ON CONFLICT (time_at) DO UPDATE SET
 				total_lbm_carbon_emissions = EXCLUDED.total_lbm_carbon_emissions,
 				total_mbm_carbon_emissions = EXCLUDED.total_mbm_carbon_emissions
-		`, t, result.totalLMBCarbonEmissions, result.totalMBMCarbonEmissions)
+		`, t, result.TotalLBMCarbonEmissions, result.TotalMBMCarbonEmissions)
 		if err != nil {
 			return fmt.Errorf("failed to insert esg_state: %w", err)
 		}

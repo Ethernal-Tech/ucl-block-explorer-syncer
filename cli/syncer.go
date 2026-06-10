@@ -210,9 +210,11 @@ func execute(cmd *cobra.Command, args []string) error {
 	}
 
 	if esgAggregationStats {
-		esgCfg := &utils.ESGAggregationBackendConfig{}
-		if config != nil && config.Syncer != nil {
+		var esgCfg *utils.ESGAggregationBackendConfig
+		if config != nil && config.Syncer != nil && config.Syncer.ESG != nil {
 			esgCfg = config.Syncer.ESG
+		} else {
+			esgCfg = &utils.ESGAggregationBackendConfig{} // by default all filters are nil
 		}
 
 		backend := esgaggregationbackend.NewESGAggregationBackend(db, esgCfg)

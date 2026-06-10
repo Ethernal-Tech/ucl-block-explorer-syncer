@@ -145,7 +145,7 @@ type Erc20Backend interface {
 // [WithESGAggregationStats].
 type ESGAggregationBackend interface {
 	// Process executes the ESG aggregation logic.
-	Process(func(string, ...any)) (done bool, wait bool, err error)
+	Process(context.Context, func(string, ...any)) (done bool, wait bool, err error)
 }
 
 // EoaActivityBackend defines the interface that must be implemented by any backend used for EOA
@@ -373,7 +373,7 @@ func NewSyncer(
 		erc20WatchlistCheckInterval: 2000,
 		erc20ProcessInterval:        2000,
 		eoaActivityProcessInterval:  2000,
-		esgAggregationPollInterval:  uint64(time.Hour * 24),
+		esgAggregationPollInterval:  uint64((24 * time.Hour).Milliseconds()),
 	}
 
 	for _, o := range opts {
@@ -460,7 +460,7 @@ func NewSyncer(
 
 	// ESG aggregation worker handle construction.
 	if syncer.esgAggregationBackend != nil {
-		esgawh, err := syncer.createESGAggregationWorkerHandle()
+		esgawh, err := syncer.createESGAggregationWorkerHandle(context.Background())
 		if err != nil {
 			return nil, err
 		}
@@ -1560,7 +1560,9 @@ type esgAggregationWorkerHandle struct {
 	}
 }
 
-func (s *Syncer) createESGAggregationWorkerHandle() (*esgAggregationWorkerHandle, error) {
+func (s *Syncer) createESGAggregationWorkerHandle(
+	ctx context.Context,
+) (*esgAggregationWorkerHandle, error) {
 	ctrlCh := make(chan struct{}, 1)
 	doneCh := make(chan string, 1)
 	errCh := make(chan struct {
@@ -1569,7 +1571,7 @@ func (s *Syncer) createESGAggregationWorkerHandle() (*esgAggregationWorkerHandle
 	}, 1)
 
 	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
-		return s.esgAggregationBackend.Process(log)
+		return s.esgAggregationBackend.Process(ctx, log)
 	}
 
 	opts := []abstractworker.AbstractWorkerOption{
