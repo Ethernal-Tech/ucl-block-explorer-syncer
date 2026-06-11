@@ -326,7 +326,7 @@ func (d *DB) GetLastProcessedBlock() (*uint64, error) {
 	return &number, nil
 }
 
-func (d *DB) GetLastProcessedERC20Block() (*uint64, error) {
+func (d *DB) GetLastProcessedEOAActivityBlock() (*uint64, error) {
 	d.t.Helper()
 
 	var value string
