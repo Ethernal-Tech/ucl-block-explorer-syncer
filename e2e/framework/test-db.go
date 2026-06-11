@@ -536,3 +536,144 @@ func (d *DB) GetBlockMinerAndGas(blockNumber uint64) (miner string, gasUsed uint
 
 	return
 }
+
+func (d *DB) InsertBlock(block *types.Block) {
+	d.t.Helper()
+
+	var baseFee *int64
+	if block.BaseFeePerGas != nil {
+		v := block.BaseFeePerGas.ToInt().Int64()
+		baseFee = &v
+	}
+
+	_, err := d.conn.Exec(`
+		INSERT INTO chain.blocks (
+			hash, number, parent_hash, nonce, sha3_uncles, logs_bloom,
+			transactions_root, state_root, receipts_root, miner,
+			difficulty, total_difficulty, extra_data, size,
+			gas_limit, gas_used, timestamp, mix_hash, base_fee, txn_count
+		) VALUES (
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10,
+			$11, $12, $13, $14,
+			$15, $16, $17, $18, $19, $20
+		)`,
+		block.Hash,
+		uint64(block.Number),
+		block.ParentHash,
+		block.Nonce,
+		block.Sha3Uncles,
+		[]byte(block.LogsBloom),
+		block.TransactionsRoot,
+		block.StateRoot,
+		block.ReceiptsRoot,
+		block.Miner,
+		uint64(block.Difficulty),
+		uint64(block.TotalDifficulty),
+		block.ExtraData,
+		uint64(block.Size),
+		uint64(block.GasLimit),
+		uint64(block.GasUsed),
+		uint64(block.Timestamp),
+		block.MixHash,
+		baseFee,
+		int64(len(block.Transactions)),
+	)
+	if err != nil {
+		d.t.Fatalf("InsertBlock: failed to insert block %s (number %d): %v",
+			block.Hash, uint64(block.Number), err)
+	}
+}
+
+func (d *DB) InsertBlocks(blocks []*types.Block) {
+	d.t.Helper()
+
+	for _, b := range blocks {
+		d.InsertBlock(b)
+	}
+}
+
+func (d *DB) InsertTransaction(tx *types.Transaction) {
+	d.t.Helper()
+
+	var blockNumber *uint64
+	if tx.BlockNumber != nil {
+		v := uint64(*tx.BlockNumber)
+		blockNumber = &v
+	}
+
+	var blockTimestamp *uint64
+	if tx.BlockTimestamp != nil {
+		v := uint64(*tx.BlockTimestamp)
+		blockTimestamp = &v
+	}
+
+	var value *string
+	if tx.Value != nil {
+		s := tx.Value.ToInt().String()
+		value = &s
+	}
+
+	var gasPrice *string
+	if tx.GasPrice != nil {
+		s := tx.GasPrice.ToInt().String()
+		gasPrice = &s
+	}
+
+	var maxFeePerGas *string
+	if tx.MaxFeePerGas != nil {
+		s := tx.MaxFeePerGas.ToInt().String()
+		maxFeePerGas = &s
+	}
+
+	var maxPriorityFeePerGas *string
+	if tx.MaxPriorityFeePerGas != nil {
+		s := tx.MaxPriorityFeePerGas.ToInt().String()
+		maxPriorityFeePerGas = &s
+	}
+
+	_, err := d.conn.Exec(`
+		INSERT INTO chain.transactions (
+			hash, block_hash, block_number, from_address, to_address,
+			value, nonce, gas_limit, gas_price, gas_fee_cap, gas_tip_cap,
+			data, type, chain_id, status, block_timestamp
+		) VALUES (
+			$1, $2, $3, $4, $5,
+			$6, $7, $8, $9, $10, $11,
+			$12, $13, $14, $15, $16
+		)`,
+		tx.Hash,
+		tx.BlockHash,
+		blockNumber,
+		tx.From,
+		tx.To,
+		value,
+		uint64(tx.Nonce),
+		uint64(tx.Gas),
+		gasPrice,
+		maxFeePerGas,
+		maxPriorityFeePerGas,
+		tx.Input,
+		uint64(tx.Type),
+		func() *string {
+			if tx.ChainID == nil {
+				return nil
+			}
+			s := tx.ChainID.ToInt().String()
+			return &s
+		}(),
+		"success",
+		blockTimestamp,
+	)
+	if err != nil {
+		d.t.Fatalf("InsertTransaction: failed to insert tx %s: %v", tx.Hash, err)
+	}
+}
+
+func (d *DB) InsertTransactions(txs []*types.Transaction) {
+	d.t.Helper()
+
+	for _, tx := range txs {
+		d.InsertTransaction(tx)
+	}
+}
