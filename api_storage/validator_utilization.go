@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 )
 
 type ValidatorUtilizationRequest struct {
@@ -115,12 +117,20 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	filters := ""
 
 	if req.Validator != "" {
+		validator, err := common.NormalizeAddress(req.Validator)
+		if err != nil {
+			return &ValidatorUtilizationResponse{
+				Code:    "400",
+				Message: "invalid validator address",
+			}, nil
+		}
+
 		filters += fmt.Sprintf(" AND b.miner = $%d", argIdx)
-
-		args = append(args, req.Validator)
-
+		args = append(args, validator)
 		argIdx++
 	}
+
+	argIdx++
 
 	filters += fmt.Sprintf(" AND b.timestamp >= extract(epoch from $%d::timestamptz)::bigint", argIdx)
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/api_storage"
+	commonHelper "github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -83,8 +84,15 @@ func (s *Server) handleUpsertValidator(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
+	validatorAddr, err := commonHelper.NormalizeAddress(address)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
 	err = api_storage.UpsertValidatorMetadata(api_storage.ValidatorMetadata{
-		Address:     address,
+		Address:     validatorAddr,
 		Name:        strings.TrimSpace(req.Name),
 		Institution: strings.TrimSpace(req.Institution),
 		Region:      strings.TrimSpace(req.Region),

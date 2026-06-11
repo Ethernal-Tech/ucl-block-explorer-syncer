@@ -28,7 +28,7 @@ type DB struct {
 }
 
 func NewDB(t *testing.T, cfg DBConfig, logsDir string) *DB {
-	t.Helper()
+	// t.Helper()
 
 	return &DB{t: t, config: cfg, logsDir: logsDir}
 }
@@ -94,6 +94,88 @@ func (d *DB) Conn() *sql.DB {
 	return d.conn
 }
 
+// StartForTestMain starts DB without *testing.T (for TestMain)
+func (d *DB) StartForTestMain() {
+	f, err := os.OpenFile(filepath.Join(d.logsDir, "db.log"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		fmt.Printf("Error creating db log file: %v, falling back to stdout\n", err)
+		f = os.Stdout
+	}
+
+	cmd := exec.Command("docker", "compose", "up", "-d")
+	cmd.Dir = d.config.ComposeDir
+	cmd.Stdout = f
+	cmd.Stderr = f
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("failed to start db: %v\n", err)
+		os.Exit(1)
+	}
+
+	d.started = true
+
+	// wait for ready without *testing.T
+	deadline := time.Now().UTC().Add(30 * time.Second)
+	for time.Now().UTC().Before(deadline) {
+		cmd := exec.Command("pg_isready",
+			"-h", d.config.Host,
+			"-p", d.config.Port,
+			"-U", d.config.User,
+		)
+		if cmd.Run() == nil {
+			fmt.Println("db ready")
+
+			conn, err := sql.Open("postgres", d.config.ConnString())
+			if err != nil {
+				fmt.Printf("failed to connect to db: %v\n", err)
+				os.Exit(1)
+			}
+
+			if err := conn.Ping(); err != nil {
+				fmt.Printf("failed to ping db: %v\n", err)
+				os.Exit(1)
+			}
+
+			d.conn = conn
+
+			return
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	fmt.Println("db not ready after 30s")
+	os.Exit(1)
+}
+
+func (d *DB) TruncateAll() {
+	_, err := d.conn.Exec(`
+		TRUNCATE
+			chain.blocks,
+			chain.transactions,
+			chain.transaction_logs,
+			chain.metadata,
+			chain.erc20_watchlist,
+			chain.erc20_hourly_stats,
+			chain.entity_hour_participation,
+			chain.validator_metadata,
+			chain.asset_issuers,
+			chain.asset_issuer_tokens
+		CASCADE
+	`)
+	if err != nil {
+		if d.t != nil {
+			d.t.Fatalf("failed to truncate: %v", err)
+		} else {
+			fmt.Printf("failed to truncate: %v\n", err)
+		}
+	}
+}
+
+func (d *DB) SetT(t *testing.T) {
+	d.t = t
+}
+
 func (d *DB) waitReady(timeout time.Duration) {
 	deadline := time.Now().UTC().Add(timeout)
 	for time.Now().UTC().Before(deadline) {
@@ -125,12 +207,12 @@ func (d *DB) GetBlockCount() int {
 	return count
 }
 
-func (d *DB) AddERC20ToWatchlist(address common.Address) {
+func (d *DB) AddERC20ToWatchlist(address string, symbol string, decimals int) {
 	_, err := d.conn.Exec(`
 		INSERT INTO chain.erc20_watchlist (address, symbol, decimals)
-		VALUES ($1, 'TTK', 18)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (address) DO UPDATE SET enabled = true
-	`, address.Hex())
+	`, address, symbol, decimals)
 	if err != nil {
 		d.t.Fatalf("failed to add token to watchlist: %s", err)
 	}
@@ -675,5 +757,67 @@ func (d *DB) InsertTransactions(txs []*types.Transaction) {
 
 	for _, tx := range txs {
 		d.InsertTransaction(tx)
+	}
+}
+
+func (d *DB) InsertTestBlock(number int, timestamp time.Time, txnCount int) {
+	hash := fmt.Sprintf("0x%064x", number)
+	parentHash := fmt.Sprintf("0x%064x", number-1)
+
+	_, err := d.conn.Exec(`
+		INSERT INTO chain.blocks (hash, number, parent_hash, nonce, sha3_uncles, logs_bloom,
+			transactions_root, state_root, receipts_root, miner, difficulty, total_difficulty,
+			extra_data, size, gas_limit, gas_used, timestamp, mix_hash, txn_count)
+		VALUES ($1, $2, $3, '0x0', '0x0', E'\\x00', '0x0', '0x0', '0x0', '0x0', 0, 0,
+			'', 0, 10000000, 0, $4, '0x0', $5)
+	`, hash, number, parentHash, timestamp.Unix(), txnCount)
+	if err != nil {
+		d.t.Fatalf("failed to insert test block %d: %v", number, err)
+	}
+
+	for i := 0; i < txnCount; i++ {
+		d.InsertTestTransaction(number, i, hash, timestamp)
+	}
+}
+
+func (d *DB) InsertTestTransaction(blockNumber, index int, blockHash string, timestamp time.Time) {
+	txHash := fmt.Sprintf("0x%064d", blockNumber*1000+index)
+
+	_, err := d.conn.Exec(`
+		INSERT INTO chain.transactions (hash, block_hash, block_number, from_address, status, block_timestamp)
+		VALUES ($1, $2, $3, '0x0000000000000000000000000000000000000000', 'success', $4)
+	`, txHash, blockHash, blockNumber, timestamp.Unix())
+	if err != nil {
+		d.t.Fatalf("failed to insert test tx %d for block %d: %v", index, blockNumber, err)
+	}
+}
+
+func (d *DB) InsertTestERC20HourlyStat(
+	tokenAddress string,
+	hourUtc time.Time,
+	transferCount int64,
+	transferVolume string,
+	mintCount int64,
+	mintVolume string,
+	burnCount int64,
+	burnVolume string,
+	cumulativeCirculation string,
+) {
+	_, err := d.conn.Exec(`
+		INSERT INTO chain.erc20_hourly_stats (
+			token_address, hour_utc,
+			transfer_count, transfer_volume_raw,
+			mint_count, mint_volume_raw,
+			burn_count, burn_volume_raw,
+			cumulative_circulation
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, tokenAddress, hourUtc,
+		transferCount, transferVolume,
+		mintCount, mintVolume,
+		burnCount, burnVolume,
+		cumulativeCirculation,
+	)
+	if err != nil {
+		d.t.Fatalf("failed to insert test erc20 hourly stat: %v", err)
 	}
 }

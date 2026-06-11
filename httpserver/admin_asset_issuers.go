@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/api_storage"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 )
 
 type assetIssuerRequest struct {
@@ -98,11 +100,21 @@ func (s *Server) handleCreateAssetIssuer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	normalizedAssets := make([]string, 0, len(req.Assets))
+	for _, asset := range req.Assets {
+		addr, err := common.NormalizeAddress(asset)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid asset address: %s", asset))
+			return
+		}
+		normalizedAssets = append(normalizedAssets, addr)
+	}
+
 	id, err := api_storage.CreateAssetIssuer(api_storage.AssetIssuer{
 		Name:    name,
 		Website: strings.TrimSpace(req.Website),
 		Contact: strings.TrimSpace(req.Contact),
-		Assets:  req.Assets,
+		Assets:  normalizedAssets,
 		Region:  strings.TrimSpace(req.Region),
 	})
 	if err != nil {
@@ -147,12 +159,22 @@ func (s *Server) handleUpdateAssetIssuer(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	normalizedAssets := make([]string, 0, len(req.Assets))
+	for _, asset := range req.Assets {
+		addr, err := common.NormalizeAddress(asset)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid asset address: %s", asset))
+			return
+		}
+		normalizedAssets = append(normalizedAssets, addr)
+	}
+
 	err = api_storage.UpdateAssetIssuer(api_storage.AssetIssuer{
 		ID:      id,
 		Name:    name,
 		Website: strings.TrimSpace(req.Website),
 		Contact: strings.TrimSpace(req.Contact),
-		Assets:  req.Assets,
+		Assets:  normalizedAssets,
 		Region:  strings.TrimSpace(req.Region),
 	})
 	if errors.Is(err, sql.ErrNoRows) {

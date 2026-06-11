@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 )
 
 const (
@@ -735,14 +737,21 @@ func GetErc20DailyStats(req Erc20DailyStatsRequest) (*Erc20DailyStatsResponse, e
 	}
 
 	trunc := dateTruncField(g)
-	token := strings.TrimSpace(req.TokenAddress)
 
 	where := "WHERE 1=1" //nolint:goconst
 	args := []interface{}{}
 
 	n := 1
 
-	if token != "" {
+	if req.TokenAddress != "" {
+		token, err := common.NormalizeAddress(req.TokenAddress)
+		if err != nil {
+			return &Erc20DailyStatsResponse{
+				Code:    "400",
+				Message: err.Error(),
+			}, nil
+		}
+
 		where += fmt.Sprintf(" AND s.token_address = $%d", n)
 
 		args = append(args, token)

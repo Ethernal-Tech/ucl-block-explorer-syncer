@@ -184,7 +184,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			t.Fatalf("%s", err.Error())
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20)
+		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -358,7 +358,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			{deployReceipt, framework.Erc20ConstructorMintAmount, nil, nil, false},
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20)
+		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -408,7 +408,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20)
+		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -439,7 +439,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20)
+		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -913,7 +913,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 			t.Fatal("syncer can't get to deployment block")
 		}
 
-		testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr)
+		testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(10 * time.Second)
@@ -983,7 +983,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 		}
 
 		if startFromTip {
-			testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr)
+			testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr.Hex(), "TTK", 18)
 		}
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).

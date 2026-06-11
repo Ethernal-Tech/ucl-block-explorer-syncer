@@ -11,13 +11,16 @@ import (
 	"time"
 )
 
+var SharedDB *DB
+
 type TestCluster struct {
-	Config *TestClusterConfig
-	UCL    *UCL
-	DB     *DB
-	Syncer *Syncer
-	API    *API
-	t      *testing.T
+	Config   *TestClusterConfig
+	UCL      *UCL
+	DB       *DB
+	Syncer   *Syncer
+	API      *API
+	t        *testing.T
+	sharedDB bool
 }
 
 type Option func(*TestClusterConfig)
@@ -116,8 +119,17 @@ func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 
 	fw.initLogsDir()
 
+	// use shared DB if available, otherwise start own
+	if SharedDB != nil {
+		fw.DB = SharedDB
+		fw.DB.SetT(t)
+		fw.DB.TruncateAll()
+		fw.sharedDB = true
+	} else {
+		fw.DB = NewDB(t, cfg.DB, cfg.LogsDir)
+	}
+
 	fw.UCL = NewUCL(t, cfg.UCL, cfg.LogsDir)
-	fw.DB = NewDB(t, cfg.DB, cfg.LogsDir)
 	fw.Syncer = NewSyncer(t, cfg.Syncer, cfg.DB, cfg.LogsDir)
 
 	if cfg.WithAPI {
@@ -138,7 +150,10 @@ func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 }
 
 func (tc *TestCluster) Start() {
-	tc.DB.Start()
+	if !tc.sharedDB {
+		tc.DB.Start()
+	}
+
 	tc.UCL.Start()
 	tc.Syncer.Start()
 
@@ -154,7 +169,10 @@ func (tc *TestCluster) Stop() {
 
 	tc.Syncer.Stop()
 	tc.UCL.Stop()
-	tc.DB.Stop()
+
+	if !tc.sharedDB {
+		tc.DB.Stop()
+	}
 }
 
 func (fw *TestCluster) initLogsDir() {

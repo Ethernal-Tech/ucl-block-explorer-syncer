@@ -5,10 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
-	"github.com/ethereum/go-ethereum/common"
+	commonHelper "github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 )
 
 const maxAdminJSONBody = 1 << 16
@@ -82,14 +83,12 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	addr := strings.TrimSpace(req.Address)
-	if !common.IsHexAddress(addr) {
-		writeError(w, http.StatusBadRequest, "invalid address")
+	tokenAddr, err := commonHelper.NormalizeAddress(req.Address)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 
 		return
 	}
-
-	tokenAddr := common.HexToAddress(addr).Hex()
 
 	symbol := strings.TrimSpace(req.Symbol)
 	if len(symbol) > 32 {
@@ -130,7 +129,9 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 			updated_at = CURRENT_TIMESTAMP
 `, tokenAddr, sym, dec, enabled)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		log.Printf("admin erc20 watchlist db error: %v", err)
+
+		writeError(w, http.StatusInternalServerError, dbError)
 
 		return
 	}
