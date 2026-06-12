@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -2188,5 +2189,795 @@ func newTestTransaction(blockNumber uint64, index int) *types.Transaction {
 		From:           "0x" + strings.Repeat("0", 40),
 		To:             &to,
 		Input:          "0x",
+	}
+}
+
+func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
+	ts := framework.NewTestCluster(t,
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+	)
+	defer ts.Stop()
+
+	ts.API.Start()
+
+	now := time.Now().UTC()
+	currentHour := now.Truncate(time.Hour)
+
+	addr1 := common.HexToAddress("0xAAAA000000000000000000000000000000000001").Hex()
+	addr2 := common.HexToAddress("0xBBBB000000000000000000000000000000000002").Hex()
+	addr3 := common.HexToAddress("0xCCCC000000000000000000000000000000000003").Hex()
+
+	// insert EOA activity directly into DB
+	// hour -2: addr1, addr2 active
+	ts.DB.InsertEOAActivity(t, addr1, currentHour.Add(-2*time.Hour))
+	ts.DB.InsertEOAActivity(t, addr2, currentHour.Add(-2*time.Hour))
+	// hour -1: addr1, addr2, addr3 active
+	ts.DB.InsertEOAActivity(t, addr1, currentHour.Add(-1*time.Hour))
+	ts.DB.InsertEOAActivity(t, addr2, currentHour.Add(-1*time.Hour))
+	ts.DB.InsertEOAActivity(t, addr3, currentHour.Add(-1*time.Hour))
+	// current hour: addr1 only
+	ts.DB.InsertEOAActivity(t, addr1, currentHour)
+
+	// yesterday: addr2 only
+	ts.DB.InsertEOAActivity(t, addr2, currentHour.Add(-25*time.Hour))
+
+	today := now.Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	thisMonth := now.Format("2006-01") + "-01"
+	nextMonth := now.AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.EntityDailyStatsRequest
+		check func(t *testing.T, resp api_storage.EntityDailyStatsResponse)
+	}{
+		{
+			name: "daily granularity - has activity today",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var total int64
+				for _, item := range resp.Data.List {
+					total += item.Count
+				}
+
+				// addr1, addr2, addr3 active today
+				if total < 3 {
+					t.Fatalf("expected at least 3 active entities today, got %d", total)
+				}
+			},
+		},
+		{
+			name: "hourly granularity - peak hour has 3 entities",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly entries")
+				}
+
+				hourCounts := map[string]int64{}
+				for _, item := range resp.Data.List {
+					hourCounts[item.BucketUtc] = item.Count
+				}
+
+				h1ago := currentHour.Add(-1 * time.Hour).Format(time.RFC3339)
+				if hourCounts[h1ago] != 3 {
+					t.Fatalf("hour -1: expected 3 active entities, got %d", hourCounts[h1ago])
+				}
+
+				h2ago := currentHour.Add(-2 * time.Hour).Format(time.RFC3339)
+				if hourCounts[h2ago] != 2 {
+					t.Fatalf("hour -2: expected 2 active entities, got %d", hourCounts[h2ago])
+				}
+
+				hNow := currentHour.Format(time.RFC3339)
+				if hourCounts[hNow] != 1 {
+					t.Fatalf("current hour: expected 1 active entity, got %d", hourCounts[hNow])
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly entry")
+				}
+
+				var hasActivity bool
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						hasActivity = true
+						break
+					}
+				}
+
+				if !hasActivity {
+					t.Fatal("expected non-zero monthly entity count")
+				}
+			},
+		},
+		{
+			name: "UTC range",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected data for UTC range")
+				}
+			},
+		},
+		{
+			name: "yesterday only",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  yesterday,
+				ToDay:    yesterday,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var total int64
+				for _, item := range resp.Data.List {
+					total += item.Count
+				}
+
+				if total != 1 {
+					t.Fatalf("yesterday: expected 1 active entity, got %d", total)
+				}
+			},
+		},
+		{
+			name: "far past - should be empty",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						t.Fatal("expected no activity for past range")
+					}
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.EntityDailyStatsResponse](ts.API, "explorer_getActiveEntityDailyStats", tc.req)
+			if err != nil {
+				t.Fatalf("getActiveEntityDailyStats failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
+	}
+}
+
+func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
+	ts := framework.NewTestCluster(t,
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+	)
+	defer ts.Stop()
+
+	ts.API.Start()
+
+	now := time.Now().UTC()
+	currentHour := now.Truncate(time.Hour)
+
+	addr1 := common.HexToAddress("0xAAAA000000000000000000000000000000000001").Hex()
+	addr2 := common.HexToAddress("0xBBBB000000000000000000000000000000000002").Hex()
+	addr3 := common.HexToAddress("0xCCCC000000000000000000000000000000000003").Hex()
+	addr4 := common.HexToAddress("0xDDDD000000000000000000000000000000000004").Hex()
+
+	// addr1: first seen 2h ago, also active 1h ago — onboarding counts only at -2h
+	ts.DB.InsertEOAActivity(t, addr1, currentHour.Add(-2*time.Hour))
+	ts.DB.InsertEOAActivity(t, addr1, currentHour.Add(-1*time.Hour))
+
+	// addr2: first seen 1h ago
+	ts.DB.InsertEOAActivity(t, addr2, currentHour.Add(-1*time.Hour))
+
+	// addr3: first seen current hour
+	ts.DB.InsertEOAActivity(t, addr3, currentHour)
+
+	// addr4: first seen yesterday
+	ts.DB.InsertEOAActivity(t, addr4, currentHour.Add(-25*time.Hour))
+
+	today := now.Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	thisMonth := now.Format("2006-01") + "-01"
+	nextMonth := now.AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.EntityDailyStatsRequest
+		check func(t *testing.T, resp api_storage.EntityDailyStatsResponse)
+	}{
+		{
+			name: "daily - today has 3 new addresses",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var total int64
+				for _, item := range resp.Data.List {
+					total += item.Count
+				}
+
+				// addr1, addr2, addr3 first seen today
+				if total != 3 {
+					t.Fatalf("expected 3 onboarded today, got %d", total)
+				}
+			},
+		},
+		{
+			name: "hourly - first seen bucketed by first hour only",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				hourCounts := map[string]int64{}
+				for _, item := range resp.Data.List {
+					hourCounts[item.BucketUtc] = item.Count
+				}
+
+				h2ago := currentHour.Add(-2 * time.Hour).Format(time.RFC3339)
+				if hourCounts[h2ago] != 1 {
+					t.Fatalf("hour -2: expected 1 new address (addr1), got %d", hourCounts[h2ago])
+				}
+
+				h1ago := currentHour.Add(-1 * time.Hour).Format(time.RFC3339)
+				// addr1 also active here but NOT counted — first seen was -2h
+				if hourCounts[h1ago] != 1 {
+					t.Fatalf("hour -1: expected 1 new address (addr2), got %d", hourCounts[h1ago])
+				}
+
+				hNow := currentHour.Format(time.RFC3339)
+				if hourCounts[hNow] != 1 {
+					t.Fatalf("current hour: expected 1 new address (addr3), got %d", hourCounts[hNow])
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.EntityDailyStatsRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var total int64
+				for _, item := range resp.Data.List {
+					total += item.Count
+				}
+
+				// all 4 addresses first seen this month
+				if total != 4 {
+					t.Fatalf("expected 4 onboarded this month, got %d", total)
+				}
+			},
+		},
+		{
+			name: "yesterday only",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  yesterday,
+				ToDay:    yesterday,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				var total int64
+				for _, item := range resp.Data.List {
+					total += item.Count
+				}
+
+				if total != 1 {
+					t.Fatalf("yesterday: expected 1 onboarded (addr4), got %d", total)
+				}
+			},
+		},
+		{
+			name: "UTC range",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected data for UTC range")
+				}
+			},
+		},
+		{
+			name: "far past - should be empty",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					if item.Count > 0 {
+						t.Fatal("expected no onboarding for past range")
+					}
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.EntityDailyStatsRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.EntityDailyStatsResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) > 1 {
+					t.Fatalf("expected at most 1 result, got %d", len(resp.Data.List))
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.EntityDailyStatsResponse](ts.API, "explorer_getOnboardingEntityDailyStats", tc.req)
+			if err != nil {
+				t.Fatalf("getOnboardingEntityDailyStats failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
+	}
+}
+
+func TestIntegration_ValidatorUtilization(t *testing.T) {
+	ts := framework.NewTestCluster(t,
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+	)
+	defer ts.Stop()
+
+	ts.API.Start()
+
+	now := time.Now().UTC()
+	currentHour := now.Truncate(time.Hour)
+
+	validator1 := common.HexToAddress("0xAAAA000000000000000000000000000000000001").Hex()
+	validator2 := common.HexToAddress("0xBBBB000000000000000000000000000000000002").Hex()
+
+	// helper to build block with specific miner, gas, timestamp
+	makeBlock := func(number uint64, miner string, gasUsed, gasLimit uint64, ts time.Time) *types.Block {
+		b := newTestBlock(number)
+		b.Miner = miner
+		b.GasUsed = hexutil.Uint64(gasUsed)
+		b.GasLimit = hexutil.Uint64(gasLimit)
+		b.Timestamp = hexutil.Uint64(uint64(ts.Unix()))
+		return b
+	}
+
+	// validator1: 3 blocks today across 2 hours
+	// block 1: hour -1, gas 21000/30M
+	// block 2: hour -1, gas 42000/30M
+	// block 3: current hour, gas 100000/30M
+	// validator2: 2 blocks today
+	// block 4: hour -1, gas 50000/30M
+	// block 5: current hour, gas 200000/30M
+	// validator1: 1 block yesterday
+	// block 6: yesterday, gas 21000/30M
+
+	blocks := []*types.Block{
+		makeBlock(1, validator1, 21000, 30_000_000, currentHour.Add(-1*time.Hour)),
+		makeBlock(2, validator1, 42000, 30_000_000, currentHour.Add(-1*time.Hour)),
+		makeBlock(3, validator1, 100000, 30_000_000, currentHour),
+		makeBlock(4, validator2, 50000, 30_000_000, currentHour.Add(-1*time.Hour)),
+		makeBlock(5, validator2, 200000, 30_000_000, currentHour),
+		makeBlock(6, validator1, 21000, 30_000_000, currentHour.Add(-25*time.Hour)),
+	}
+
+	for _, b := range blocks {
+		ts.DB.InsertBlock(t, b)
+	}
+
+	today := now.Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	thisMonth := now.Format("2006-01") + "-01"
+	nextMonth := now.AddDate(0, 1, 0).Format("2006-01") + "-01"
+
+	tests := []struct {
+		name  string
+		req   *api_storage.ValidatorUtilizationRequest
+		check func(t *testing.T, resp api_storage.ValidatorUtilizationResponse)
+	}{
+		{
+			name: "daily - both validators present",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) != 2 {
+					t.Fatalf("expected 2 validators, got %d", len(resp.Data.List))
+				}
+
+				byAddr := map[string]api_storage.ValidatorUtilizationRow{}
+				for _, item := range resp.Data.List {
+					byAddr[item.ValidatorAddress] = item
+				}
+
+				v1 := byAddr[validator1]
+				if v1.BlockCount != 3 {
+					t.Fatalf("validator1: expected 3 blocks today, got %d", v1.BlockCount)
+				}
+
+				gas1, _ := strconv.ParseUint(v1.GasUsedTotal, 10, 64)
+				if gas1 != 163000 {
+					t.Fatalf("validator1: expected gas 163000, got %d", gas1)
+				}
+
+				v2 := byAddr[validator2]
+				if v2.BlockCount != 2 {
+					t.Fatalf("validator2: expected 2 blocks today, got %d", v2.BlockCount)
+				}
+
+				gas2, _ := strconv.ParseUint(v2.GasUsedTotal, 10, 64)
+				if gas2 != 250000 {
+					t.Fatalf("validator2: expected gas 250000, got %d", gas2)
+				}
+			},
+		},
+		{
+			name: "hourly - per-hour breakdown",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected hourly entries")
+				}
+
+				// find validator1 in hour -1
+				h1ago := currentHour.Add(-1 * time.Hour).Format(time.RFC3339)
+				var v1h1 *api_storage.ValidatorUtilizationRow
+
+				for i, item := range resp.Data.List {
+					if item.ValidatorAddress == validator1 && item.BucketUtc == h1ago {
+						v1h1 = &resp.Data.List[i]
+						break
+					}
+				}
+
+				if v1h1 == nil {
+					t.Fatal("validator1 not found for hour -1")
+				}
+
+				if v1h1.BlockCount != 2 {
+					t.Fatalf("validator1 hour -1: expected 2 blocks, got %d", v1h1.BlockCount)
+				}
+
+				gas, _ := strconv.ParseUint(v1h1.GasUsedTotal, 10, 64)
+				if gas != 63000 {
+					t.Fatalf("validator1 hour -1: expected gas 63000, got %d", gas)
+				}
+			},
+		},
+		{
+			name: "utilization pct is correct",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "hour",
+				FromDay:     today,
+				ToDay:       tomorrow,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				for _, item := range resp.Data.List {
+					gasUsed, _ := strconv.ParseFloat(item.GasUsedTotal, 64)
+					gasLimit, _ := strconv.ParseFloat(item.GasLimitTotal, 64)
+
+					if gasLimit == 0 {
+						continue
+					}
+
+					expected := (gasUsed / gasLimit) * 100
+					actual, _ := strconv.ParseFloat(item.UtilizationPct, 64)
+
+					if math.Abs(expected-actual) > 0.01 {
+						t.Fatalf("validator %s bucket %s: utilization mismatch: expected %.4f%% got %s%%",
+							item.ValidatorAddress, item.BucketUtc, expected, item.UtilizationPct)
+					}
+				}
+			},
+		},
+		{
+			name: "filter by validator1",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Validator: validator1,
+				FromDay:   today,
+				ToDay:     tomorrow,
+				Page:      1,
+				PageSize:  50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				var minerInDB string
+				ts.DB.Conn().QueryRow("SELECT miner FROM chain.blocks WHERE number = 1").Scan(&minerInDB) //TODO:
+				t.Logf("miner in DB: %q, validator1: %q", minerInDB, validator1)
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected results for validator1")
+				}
+
+				for _, item := range resp.Data.List {
+					if item.ValidatorAddress != validator1 {
+						t.Fatalf("expected only validator1, got %s", item.ValidatorAddress)
+					}
+				}
+
+				var totalBlocks int64
+				for _, item := range resp.Data.List {
+					totalBlocks += item.BlockCount
+				}
+
+				if totalBlocks != 3 {
+					t.Fatalf("validator1: expected 3 total blocks today, got %d", totalBlocks)
+				}
+			},
+		},
+		{
+			name: "monthly granularity",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Granularity: "month",
+				FromDay:     thisMonth,
+				ToDay:       nextMonth,
+				Page:        1,
+				PageSize:    50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) == 0 {
+					t.Fatal("expected monthly entries")
+				}
+
+				// validator1 has 4 blocks this month (3 today + 1 yesterday)
+				for _, item := range resp.Data.List {
+					if item.ValidatorAddress == validator1 {
+						if item.BlockCount != 4 {
+							t.Fatalf("validator1 monthly: expected 4 blocks, got %d", item.BlockCount)
+						}
+
+						gas, _ := strconv.ParseUint(item.GasUsedTotal, 10, 64)
+						if gas != 184000 {
+							t.Fatalf("validator1 monthly: expected gas 184000, got %d", gas)
+						}
+					}
+				}
+			},
+		},
+		{
+			name: "yesterday only",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  yesterday,
+				ToDay:    yesterday,
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) != 1 {
+					t.Fatalf("expected 1 validator yesterday, got %d", len(resp.Data.List))
+				}
+
+				if resp.Data.List[0].ValidatorAddress != validator1 {
+					t.Fatalf("expected validator1 yesterday, got %s", resp.Data.List[0].ValidatorAddress)
+				}
+
+				if resp.Data.List[0].BlockCount != 1 {
+					t.Fatalf("yesterday: expected 1 block, got %d", resp.Data.List[0].BlockCount)
+				}
+			},
+		},
+		{
+			name: "UTC range matches day range",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromUtc:  today + "T00:00:00Z",
+				ToUtc:    tomorrow + "T00:00:00Z",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				dayResp, err := framework.Call[api_storage.ValidatorUtilizationResponse](
+					ts.API, "explorer_getValidatorUtilization", &api_storage.ValidatorUtilizationRequest{
+						FromDay:  today,
+						ToDay:    tomorrow,
+						Page:     1,
+						PageSize: 50,
+					})
+				if err != nil {
+					t.Fatalf("day range call failed: %v", err)
+				}
+
+				if len(resp.Data.List) != len(dayResp.Data.List) {
+					t.Fatalf("UTC count (%d) != day count (%d)", len(resp.Data.List), len(dayResp.Data.List))
+				}
+
+				utcByAddr := map[string]string{}
+				for _, item := range resp.Data.List {
+					utcByAddr[item.ValidatorAddress] = item.GasUsedTotal
+				}
+
+				for _, item := range dayResp.Data.List {
+					if utcByAddr[item.ValidatorAddress] != item.GasUsedTotal {
+						t.Fatalf("validator %s: UTC gas (%s) != day gas (%s)",
+							item.ValidatorAddress, utcByAddr[item.ValidatorAddress], item.GasUsedTotal)
+					}
+				}
+			},
+		},
+		{
+			name: "non-existent validator",
+			req: &api_storage.ValidatorUtilizationRequest{
+				Validator: "0x0000000000000000000000000000000000000000",
+				FromDay:   today,
+				ToDay:     tomorrow,
+				Page:      1,
+				PageSize:  50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) != 0 {
+					t.Fatalf("expected empty list, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "far past - should be empty",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  "2020-01-01",
+				ToDay:    "2020-01-02",
+				Page:     1,
+				PageSize: 50,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) != 0 {
+					t.Fatalf("expected empty list, got %d", len(resp.Data.List))
+				}
+			},
+		},
+		{
+			name: "pagination - page 1 size 1",
+			req: &api_storage.ValidatorUtilizationRequest{
+				FromDay:  today,
+				ToDay:    tomorrow,
+				Page:     1,
+				PageSize: 1,
+			},
+			check: func(t *testing.T, resp api_storage.ValidatorUtilizationResponse) {
+				t.Helper()
+
+				if len(resp.Data.List) != 1 {
+					t.Fatalf("expected exactly 1 result, got %d", len(resp.Data.List))
+				}
+
+				if resp.Data.Total != 2 {
+					t.Fatalf("expected total 2 validators, got %d", resp.Data.Total)
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.ValidatorUtilizationResponse](ts.API, "explorer_getValidatorUtilization", tc.req)
+			if err != nil {
+				t.Fatalf("getValidatorUtilization failed: %v", err)
+			}
+
+			t.Logf("response: %d items", len(resp.Data.List))
+			tc.check(t, resp)
+		})
 	}
 }

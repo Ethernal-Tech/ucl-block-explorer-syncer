@@ -781,3 +781,16 @@ func (d *DB) InsertTestERC20HourlyStat(
 		t.Fatalf("failed to insert test erc20 hourly stat: %v", err)
 	}
 }
+
+func (d *DB) InsertEOAActivity(t *testing.T, address string, hourUtc time.Time) {
+	t.Helper()
+
+	_, err := d.conn.Exec(`
+		INSERT INTO chain.entity_hour_participation (address, hour_utc)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`, address, hourUtc.Truncate(time.Hour))
+	if err != nil {
+		t.Fatalf("InsertEOAActivity: failed to insert for address %s at %s: %v", address, hourUtc, err)
+	}
+}
