@@ -24,45 +24,10 @@ type DB struct {
 	config  DBConfig
 	logsDir string
 	started bool
-	t       *testing.T
 }
 
-func NewDB(t *testing.T, cfg DBConfig, logsDir string) *DB {
-	// t.Helper()
-
-	return &DB{t: t, config: cfg, logsDir: logsDir}
-}
-
-func (d *DB) Start() {
-	f, err := os.OpenFile(filepath.Join(d.logsDir, "db.log"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		fmt.Printf("Error creating db log file: %v, falling back to stdout\n", err)
-
-		f = os.Stdout
-	}
-
-	cmd := exec.Command("docker", "compose", "up", "-d")
-	cmd.Dir = d.config.ComposeDir
-	cmd.Stdout = f
-	cmd.Stderr = f
-
-	if err := cmd.Run(); err != nil {
-		d.t.Fatalf("failed to start db: %v", err)
-	}
-
-	d.started = true
-	d.waitReady(30 * time.Second)
-
-	conn, err := sql.Open("postgres", d.config.ConnString())
-	if err != nil {
-		d.t.Fatalf("failed to connect to db: %v", err)
-	}
-
-	if err := conn.Ping(); err != nil {
-		d.t.Fatalf("failed to ping db: %v", err)
-	}
-
-	d.conn = conn
+func NewDB(cfg DBConfig, logsDir string) *DB {
+	return &DB{config: cfg, logsDir: logsDir}
 }
 
 func (d *DB) Stop() {
@@ -99,6 +64,7 @@ func (d *DB) StartForTestMain() {
 	f, err := os.OpenFile(filepath.Join(d.logsDir, "db.log"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		fmt.Printf("Error creating db log file: %v, falling back to stdout\n", err)
+
 		f = os.Stdout
 	}
 
@@ -148,7 +114,9 @@ func (d *DB) StartForTestMain() {
 	os.Exit(1)
 }
 
-func (d *DB) TruncateAll() {
+func (d *DB) TruncateAll(t *testing.T) {
+	t.Helper()
+
 	_, err := d.conn.Exec(`
 		TRUNCATE
 			chain.blocks,
@@ -164,66 +132,46 @@ func (d *DB) TruncateAll() {
 		CASCADE
 	`)
 	if err != nil {
-		if d.t != nil {
-			d.t.Fatalf("failed to truncate: %v", err)
+		if t != nil {
+			t.Fatalf("failed to truncate: %v", err)
 		} else {
 			fmt.Printf("failed to truncate: %v\n", err)
 		}
 	}
 }
 
-func (d *DB) SetT(t *testing.T) {
-	d.t = t
-}
-
-func (d *DB) waitReady(timeout time.Duration) {
-	deadline := time.Now().UTC().Add(timeout)
-	for time.Now().UTC().Before(deadline) {
-		cmd := exec.Command("pg_isready", //nolint:gosec
-			"-h", d.config.Host,
-			"-p", d.config.Port,
-			"-U", d.config.User,
-		)
-		if cmd.Run() == nil {
-			d.t.Logf("db ready")
-
-			return
-		}
-
-		time.Sleep(time.Second)
-	}
-
-	d.t.Fatalf("db not ready after %s", timeout)
-}
-
-func (d *DB) GetBlockCount() int {
+func (d *DB) GetBlockCount(t *testing.T) int {
 	var count int
 
 	err := d.conn.QueryRow("SELECT COUNT(*) FROM chain.blocks").Scan(&count)
 	if err != nil {
-		d.t.Fatalf("failed to query blocks: %s", err)
+		t.Fatalf("failed to query blocks: %s", err)
 	}
 
 	return count
 }
 
-func (d *DB) AddERC20ToWatchlist(address string, symbol string, decimals int) {
+func (d *DB) AddERC20ToWatchlist(t *testing.T, address string, symbol string, decimals int) {
+	t.Helper()
+
 	_, err := d.conn.Exec(`
 		INSERT INTO chain.erc20_watchlist (address, symbol, decimals)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (address) DO UPDATE SET enabled = true
 	`, address, symbol, decimals)
 	if err != nil {
-		d.t.Fatalf("failed to add token to watchlist: %s", err)
+		t.Fatalf("failed to add token to watchlist: %s", err)
 	}
 }
 
-func (d *DB) RemoveERC20FromWatchlist(address common.Address) {
+func (d *DB) RemoveERC20FromWatchlist(t *testing.T, address common.Address) {
+	t.Helper()
+
 	_, err := d.conn.Exec(`
 		UPDATE chain.erc20_watchlist SET enabled = false WHERE address = $1
 	`, address.Hex())
 	if err != nil {
-		d.t.Fatalf("failed to remove token from watchlist: %s", err)
+		t.Fatalf("failed to remove token from watchlist: %s", err)
 	}
 }
 
@@ -257,7 +205,8 @@ type HourlyStats struct {
 type TokenHourlyMap map[string]map[hexutil.Uint64]HourlyStats
 
 func (d *DB) GetERC20TokensHourlyStatsFromDB(
-	ctx context.Context) TokenHourlyMap {
+	ctx context.Context,
+	t *testing.T) TokenHourlyMap {
 	query := `
 		SELECT 
 			token_address, hour_utc, transfer_count, transfer_volume_raw, 
@@ -268,7 +217,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 
 	rows, err := d.conn.QueryContext(ctx, query)
 	if err != nil {
-		d.t.Fatalf("failed to query: %s", err)
+		t.Fatalf("failed to query: %s", err)
 	}
 
 	defer rows.Close() //nolint:errcheck
@@ -296,7 +245,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 			&cumCircStr,
 		)
 		if err != nil {
-			d.t.Fatalf("failed to scan row: %s", err.Error())
+			t.Fatalf("failed to scan row: %s", err.Error())
 		}
 
 		stats.TransferVolumeRaw = new(big.Int)
@@ -321,7 +270,7 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 	}
 
 	if err = rows.Err(); err != nil {
-		d.t.Fatalf("failed to scan rows: %s", err.Error())
+		t.Fatalf("failed to scan rows: %s", err.Error())
 	}
 
 	return retMap
@@ -331,7 +280,8 @@ func (d *DB) GetERC20TokensHourlyStatsFromDB(
 type EOAActivityMap map[string][]hexutil.Uint64
 
 func (d *DB) GetEOAParticipationStats(
-	ctx context.Context) EOAActivityMap {
+	ctx context.Context,
+	t *testing.T) EOAActivityMap {
 	query := `
 		SELECT hour_utc, address 
 		FROM chain.entity_hour_participation
@@ -339,7 +289,7 @@ func (d *DB) GetEOAParticipationStats(
 
 	rows, err := d.conn.QueryContext(ctx, query)
 	if err != nil {
-		d.t.Fatalf("failed to query: %s", err)
+		t.Fatalf("failed to query: %s", err)
 	}
 
 	defer rows.Close() //nolint:errcheck
@@ -353,7 +303,7 @@ func (d *DB) GetEOAParticipationStats(
 
 		err := rows.Scan(&hourUtc, &address)
 		if err != nil {
-			d.t.Fatalf("failed to scan row: %s", err.Error())
+			t.Fatalf("failed to scan row: %s", err.Error())
 		}
 
 		hourTimestamp := hexutil.Uint64(hourUtc.Unix())
@@ -362,14 +312,14 @@ func (d *DB) GetEOAParticipationStats(
 	}
 
 	if err = rows.Err(); err != nil {
-		d.t.Fatalf("failed to scan rows: %s", err.Error())
+		t.Fatalf("failed to scan rows: %s", err.Error())
 	}
 
 	return retMap
 }
 
-func (d *DB) GetERC20NextBlock(address common.Address) uint64 {
-	d.t.Helper()
+func (d *DB) GetERC20NextBlock(t *testing.T, address common.Address) uint64 {
+	t.Helper()
 
 	var nextBlock uint64
 
@@ -378,14 +328,14 @@ func (d *DB) GetERC20NextBlock(address common.Address) uint64 {
 		address.Hex(),
 	).Scan(&nextBlock)
 	if err != nil {
-		d.t.Fatalf("failed to query last block: %s", err)
+		t.Fatalf("failed to query last block: %s", err)
 	}
 
 	return nextBlock
 }
 
-func (d *DB) GetLastProcessedBlock() (*uint64, error) {
-	d.t.Helper()
+func (d *DB) GetLastProcessedBlock(t *testing.T) (*uint64, error) {
+	t.Helper()
 
 	var value string
 
@@ -408,8 +358,8 @@ func (d *DB) GetLastProcessedBlock() (*uint64, error) {
 	return &number, nil
 }
 
-func (d *DB) GetLastProcessedEOAActivityBlock() (*uint64, error) {
-	d.t.Helper()
+func (d *DB) GetLastProcessedEOAActivityBlock(t *testing.T) (*uint64, error) {
+	t.Helper()
 
 	var value string
 
@@ -434,8 +384,9 @@ func (d *DB) GetLastProcessedEOAActivityBlock() (*uint64, error) {
 
 func (d *DB) GetTransactionByHash(
 	ctx context.Context,
+	t *testing.T,
 	hash string) *types.Transaction {
-	d.t.Helper()
+	t.Helper()
 
 	var tx types.Transaction
 
@@ -473,12 +424,12 @@ func (d *DB) GetTransactionByHash(
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			d.t.Fatalf("transaction not found in DB for hash: %s", hash)
+			t.Fatalf("transaction not found in DB for hash: %s", hash)
 
 			return nil
 		}
 
-		d.t.Fatalf("failed to query transaction by hash %s: %v", hash, err)
+		t.Fatalf("failed to query transaction by hash %s: %v", hash, err)
 
 		return nil
 	}
@@ -489,7 +440,7 @@ func (d *DB) GetTransactionByHash(
 	if valueStr != nil {
 		bi := new(big.Int)
 		if _, ok := bi.SetString(*valueStr, 10); !ok {
-			d.t.Fatalf("failed to parse value field")
+			t.Fatalf("failed to parse value field")
 		}
 
 		tx.Value = (*hexutil.Big)(bi)
@@ -498,7 +449,7 @@ func (d *DB) GetTransactionByHash(
 	if gasPriceStr != nil {
 		bi := new(big.Int)
 		if _, ok := bi.SetString(*gasPriceStr, 10); !ok {
-			d.t.Fatalf("failed to parse gas_price field")
+			t.Fatalf("failed to parse gas_price field")
 		}
 
 		tx.GasPrice = (*hexutil.Big)(bi)
@@ -529,34 +480,34 @@ func (d *DB) GetTransactionByHash(
 	return &tx
 }
 
-func (d *DB) GetLastBlockNumber() uint64 {
+func (d *DB) GetLastBlockNumber(t *testing.T) uint64 {
 	var num uint64
 
 	err := d.conn.QueryRow("SELECT COALESCE(MAX(number), 0) FROM chain.blocks").Scan(&num)
 	if err != nil {
-		d.t.Fatalf("failed to query last block: %s", err)
+		t.Fatalf("failed to query last block: %s", err)
 	}
 
 	return num
 }
 
-func (d *DB) GetTxCountAfterBlock(blockNumber uint64) uint64 {
+func (d *DB) GetTxCountAfterBlock(t *testing.T, blockNumber uint64) uint64 {
 	var count uint64
 
 	err := d.conn.QueryRow(
 		"SELECT COUNT(*) FROM chain.transactions WHERE block_number > $1",
 		blockNumber).Scan(&count)
 	if err != nil {
-		d.t.Fatalf("failed to query tx count: %s", err)
+		t.Fatalf("failed to query tx count: %s", err)
 	}
 
 	return count
 }
 
-func (d *DB) WaitForBlock(block uint64, timeout time.Duration) error {
+func (d *DB) WaitForBlock(t *testing.T, block uint64, timeout time.Duration) error {
 	deadline := time.Now().UTC().Add(timeout)
 	for time.Now().UTC().Before(deadline) {
-		lastBlockPtr, err := d.GetLastProcessedBlock()
+		lastBlockPtr, err := d.GetLastProcessedBlock(t)
 		if err != nil {
 			return err
 		}
@@ -571,10 +522,10 @@ func (d *DB) WaitForBlock(block uint64, timeout time.Duration) error {
 	return fmt.Errorf("timeout: syncer did not process up to block %d within %s", block, timeout)
 }
 
-func (d *DB) WaitForERC20Block(address common.Address, maxBlock uint64, timeout time.Duration) error {
+func (d *DB) WaitForERC20Block(t *testing.T, address common.Address, maxBlock uint64, timeout time.Duration) error {
 	deadline := time.Now().UTC().Add(timeout)
 	for time.Now().UTC().Before(deadline) {
-		nextBlock := d.GetERC20NextBlock(address)
+		nextBlock := d.GetERC20NextBlock(t, address)
 		if nextBlock > maxBlock {
 			return nil
 		}
@@ -585,44 +536,45 @@ func (d *DB) WaitForERC20Block(address common.Address, maxBlock uint64, timeout 
 	return fmt.Errorf("timeout: erc20 syncer did not process up to block %d within %s", maxBlock, timeout)
 }
 
-func (d *DB) GetTotalGasUsed() uint64 {
+func (d *DB) GetTotalGasUsed(t *testing.T) uint64 {
 	var total uint64
 
 	err := d.conn.QueryRow("SELECT COALESCE(SUM(gas_used), 0) FROM chain.blocks WHERE number > 0").Scan(&total)
 	if err != nil {
-		d.t.Fatalf("failed to query total gas: %s", err)
+		t.Fatalf("failed to query total gas: %s", err)
 	}
 
 	return total
 }
 
-func (d *DB) GetValidatorStats(validator string) (gasUsed uint64, gasLimit uint64, blockCount int64) {
+func (d *DB) GetValidatorStats(t *testing.T, validator string) (gasUsed uint64, gasLimit uint64, blockCount int64) {
 	err := d.conn.QueryRow(`
 		SELECT COALESCE(SUM(gas_used), 0), COALESCE(SUM(gas_limit), 0), COUNT(*)
 		FROM chain.blocks WHERE miner = $1 AND number > 0
 	`, validator).Scan(&gasUsed, &gasLimit, &blockCount)
 	if err != nil {
-		d.t.Fatalf("failed to query validator stats: %s", err)
+		t.Fatalf("failed to query validator stats: %s", err)
 	}
 
 	return
 }
 
-func (d *DB) GetBlockMinerAndGas(blockNumber uint64) (miner string, gasUsed uint64) {
+func (d *DB) GetBlockMinerAndGas(t *testing.T, blockNumber uint64) (miner string, gasUsed uint64) {
 	err := d.conn.QueryRow(`
 		SELECT miner, gas_used FROM chain.blocks WHERE number = $1
 	`, blockNumber).Scan(&miner, &gasUsed)
 	if err != nil {
-		d.t.Fatalf("failed to query block %d: %s", blockNumber, err)
+		t.Fatalf("failed to query block %d: %s", blockNumber, err)
 	}
 
 	return
 }
 
-func (d *DB) InsertBlock(block *types.Block) {
-	d.t.Helper()
+func (d *DB) InsertBlock(t *testing.T, block *types.Block) {
+	t.Helper()
 
 	var baseFee *int64
+
 	if block.BaseFeePerGas != nil {
 		v := block.BaseFeePerGas.ToInt().Int64()
 		baseFee = &v
@@ -662,53 +614,59 @@ func (d *DB) InsertBlock(block *types.Block) {
 		int64(len(block.Transactions)),
 	)
 	if err != nil {
-		d.t.Fatalf("InsertBlock: failed to insert block %s (number %d): %v",
+		t.Fatalf("InsertBlock: failed to insert block %s (number %d): %v",
 			block.Hash, uint64(block.Number), err)
 	}
 }
 
-func (d *DB) InsertBlocks(blocks []*types.Block) {
-	d.t.Helper()
+func (d *DB) InsertBlocks(t *testing.T, blocks []*types.Block) {
+	t.Helper()
 
 	for _, b := range blocks {
-		d.InsertBlock(b)
+		d.InsertBlock(t, b)
 	}
 }
 
-func (d *DB) InsertTransaction(tx *types.Transaction) {
-	d.t.Helper()
+func (d *DB) InsertTransaction(t *testing.T, tx *types.Transaction) {
+	t.Helper()
 
 	var blockNumber *uint64
+
 	if tx.BlockNumber != nil {
 		v := uint64(*tx.BlockNumber)
 		blockNumber = &v
 	}
 
 	var blockTimestamp *uint64
+
 	if tx.BlockTimestamp != nil {
 		v := uint64(*tx.BlockTimestamp)
 		blockTimestamp = &v
 	}
 
 	var value *string
+
 	if tx.Value != nil {
 		s := tx.Value.ToInt().String()
 		value = &s
 	}
 
 	var gasPrice *string
+
 	if tx.GasPrice != nil {
 		s := tx.GasPrice.ToInt().String()
 		gasPrice = &s
 	}
 
 	var maxFeePerGas *string
+
 	if tx.MaxFeePerGas != nil {
 		s := tx.MaxFeePerGas.ToInt().String()
 		maxFeePerGas = &s
 	}
 
 	var maxPriorityFeePerGas *string
+
 	if tx.MaxPriorityFeePerGas != nil {
 		s := tx.MaxPriorityFeePerGas.ToInt().String()
 		maxPriorityFeePerGas = &s
@@ -741,58 +699,29 @@ func (d *DB) InsertTransaction(tx *types.Transaction) {
 			if tx.ChainID == nil {
 				return nil
 			}
+
 			s := tx.ChainID.ToInt().String()
+
 			return &s
 		}(),
 		"success",
 		blockTimestamp,
 	)
 	if err != nil {
-		d.t.Fatalf("InsertTransaction: failed to insert tx %s: %v", tx.Hash, err)
+		t.Fatalf("InsertTransaction: failed to insert tx %s: %v", tx.Hash, err)
 	}
 }
 
-func (d *DB) InsertTransactions(txs []*types.Transaction) {
-	d.t.Helper()
+func (d *DB) InsertTransactions(t *testing.T, txs []*types.Transaction) {
+	t.Helper()
 
 	for _, tx := range txs {
-		d.InsertTransaction(tx)
-	}
-}
-
-func (d *DB) InsertTestBlock(number int, timestamp time.Time, txnCount int) {
-	hash := fmt.Sprintf("0x%064x", number)
-	parentHash := fmt.Sprintf("0x%064x", number-1)
-
-	_, err := d.conn.Exec(`
-		INSERT INTO chain.blocks (hash, number, parent_hash, nonce, sha3_uncles, logs_bloom,
-			transactions_root, state_root, receipts_root, miner, difficulty, total_difficulty,
-			extra_data, size, gas_limit, gas_used, timestamp, mix_hash, txn_count)
-		VALUES ($1, $2, $3, '0x0', '0x0', E'\\x00', '0x0', '0x0', '0x0', '0x0', 0, 0,
-			'', 0, 10000000, 0, $4, '0x0', $5)
-	`, hash, number, parentHash, timestamp.Unix(), txnCount)
-	if err != nil {
-		d.t.Fatalf("failed to insert test block %d: %v", number, err)
-	}
-
-	for i := 0; i < txnCount; i++ {
-		d.InsertTestTransaction(number, i, hash, timestamp)
-	}
-}
-
-func (d *DB) InsertTestTransaction(blockNumber, index int, blockHash string, timestamp time.Time) {
-	txHash := fmt.Sprintf("0x%064d", blockNumber*1000+index)
-
-	_, err := d.conn.Exec(`
-		INSERT INTO chain.transactions (hash, block_hash, block_number, from_address, status, block_timestamp)
-		VALUES ($1, $2, $3, '0x0000000000000000000000000000000000000000', 'success', $4)
-	`, txHash, blockHash, blockNumber, timestamp.Unix())
-	if err != nil {
-		d.t.Fatalf("failed to insert test tx %d for block %d: %v", index, blockNumber, err)
+		d.InsertTransaction(t, tx)
 	}
 }
 
 func (d *DB) InsertTestERC20HourlyStat(
+	t *testing.T,
 	tokenAddress string,
 	hourUtc time.Time,
 	transferCount int64,
@@ -818,6 +747,6 @@ func (d *DB) InsertTestERC20HourlyStat(
 		cumulativeCirculation,
 	)
 	if err != nil {
-		d.t.Fatalf("failed to insert test erc20 hourly stat: %v", err)
+		t.Fatalf("failed to insert test erc20 hourly stat: %v", err)
 	}
 }

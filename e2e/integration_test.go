@@ -276,6 +276,7 @@ func TestIntegration_AssetIssuers(t *testing.T) {
 	ts.API.AddERC20ToWatchlist(tokenAddr, "GAM", 18, secret)
 
 	var wlAddr string
+
 	ts.DB.Conn().QueryRow("SELECT address FROM chain.erc20_watchlist WHERE symbol = 'GAM'").Scan(&wlAddr)
 	t.Logf("DEBUG watchlist address: '%s'", wlAddr)
 	t.Logf("DEBUG token address sent: '%s'", tokenAddr)
@@ -387,7 +388,29 @@ func TestIntegration_GetLineData(t *testing.T) {
 	totalTxn := int64(0)
 
 	for _, b := range blocks {
-		ts.DB.InsertTestBlock(b.number, b.timestamp, b.txnCount)
+		blockHash := fmt.Sprintf("0x%064x", b.number)
+		blockNumber := hexutil.Uint64(uint64(b.number))
+		blockTS := hexutil.Uint64(uint64(b.timestamp.Unix()))
+
+		txns := make([]*types.Transaction, b.txnCount)
+		for i := range txns {
+			txns[i] = &types.Transaction{
+				Hash:           fmt.Sprintf("0x%064x", b.number*1000+i),
+				BlockHash:      &blockHash,
+				BlockNumber:    &blockNumber,
+				BlockTimestamp: &blockTS,
+			}
+		}
+
+		blk := &types.Block{
+			Hash:         blockHash,
+			Number:       blockNumber,
+			Timestamp:    blockTS,
+			Transactions: txns,
+		}
+
+		ts.DB.InsertBlock(t, blk)
+		ts.DB.InsertTransactions(t, txns)
 
 		hour := b.timestamp.Truncate(time.Hour).Unix()
 		expectedPerHour[hour] += int64(b.txnCount)
@@ -429,7 +452,6 @@ func TestIntegration_GetLineData(t *testing.T) {
 			apiTotal += point.Count
 		}
 
-		// only today's blocks should appear in 24h window
 		todayExpected := int64(0)
 		todayStr := now.Format("2006-01-02")
 
@@ -458,6 +480,7 @@ func TestIntegration_GetLineData(t *testing.T) {
 		}
 
 		var apiTotal int64
+
 		daysWithData := 0
 
 		for _, point := range resp.Data {
@@ -498,8 +521,8 @@ func TestIntegration_GetLineData(t *testing.T) {
 			t.Fatalf("getLineData day failed: %v", err)
 		}
 
-		// verify specific days have expected counts
 		dayMap := map[string]int64{}
+
 		for _, point := range resp.Data {
 			pointTime, _ := time.Parse("2006-01-02T00:00:00.000Z", point.Time)
 			dayMap[pointTime.Format("2006-01-02")] = point.Count
@@ -557,23 +580,23 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 	tokenAddr := common.HexToAddress("0xabc1234567890000000000000000000000000001").Hex()
 	tokenAddr2 := common.HexToAddress("0xdef9876543210000000000000000000000000002").Hex()
 
-	ts.DB.AddERC20ToWatchlist(tokenAddr, "TTK", 18)
-	ts.DB.AddERC20ToWatchlist(tokenAddr2, "ABC", 6)
+	ts.DB.AddERC20ToWatchlist(t, tokenAddr, "TTK", 18)
+	ts.DB.AddERC20ToWatchlist(t, tokenAddr2, "ABC", 6)
 
 	// token 1: activity across multiple hours today
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-2*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-2*time.Hour),
 		3, "3000000", 2, "5000000", 1, "1000000", "4000000")
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-1*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-1*time.Hour),
 		5, "8000000", 1, "2000000", 0, "0", "6000000")
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour,
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour,
 		2, "1000000", 0, "0", 1, "500000", "5500000")
 
 	// token 1: activity yesterday
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-25*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-25*time.Hour),
 		4, "4000000", 3, "9000000", 2, "3000000", "10000000")
 
 	// token 2: activity today
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr2, currentHour,
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr2, currentHour,
 		1, "100", 1, "500", 0, "0", "500")
 
 	today := now.Format("2006-01-02")
@@ -626,6 +649,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 
 				// token 1 has 3 hours today: transfers=10, mints=3, burns=2
 				var totalTransfers, totalMints, totalBurns int64
+
 				for _, item := range resp.Data.List {
 					if item.TokenAddress == tokenAddr {
 						totalTransfers += item.TransferCount
@@ -665,6 +689,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 
 				// monthly should aggregate all days
 				var totalTransfers int64
+
 				for _, item := range resp.Data.List {
 					if item.TokenAddress == tokenAddr {
 						totalTransfers += item.TransferCount
@@ -759,6 +784,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 				t.Helper()
 
 				var transfers int64
+
 				for _, item := range resp.Data.List {
 					if item.TokenAddress == tokenAddr {
 						transfers += item.TransferCount
@@ -897,24 +923,24 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 	currentHour := now.Truncate(time.Hour)
 
 	tokenAddr := common.HexToAddress("0xabc1234567890000000000000000000000000001").Hex()
-	ts.DB.AddERC20ToWatchlist(tokenAddr, "TTK", 18)
+	ts.DB.AddERC20ToWatchlist(t, tokenAddr, "TTK", 18)
 
 	// insert hourly stats with known cumulative circulation
 	// hour -3: mint 1000 raw → circulation = 1000
 	// hour -2: mint 500, burn 200 → circulation = 1300
 	// hour -1: mint 300 → circulation = 1600
 	// hour  0: burn 100 → circulation = 1500
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-3*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-3*time.Hour),
 		0, "0", 1, "1000", 0, "0", "1000")
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-2*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-2*time.Hour),
 		0, "0", 1, "500", 1, "200", "1300")
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-1*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-1*time.Hour),
 		2, "400", 1, "300", 0, "0", "1600")
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour,
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour,
 		1, "100", 0, "0", 1, "100", "1500")
 
 	// yesterday's data
-	ts.DB.InsertTestERC20HourlyStat(tokenAddr, currentHour.Add(-25*time.Hour),
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, currentHour.Add(-25*time.Hour),
 		3, "600", 2, "2000", 1, "500", "800")
 
 	// expected final circulation from last entry
@@ -1010,6 +1036,7 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 
 				// verify progression: circulation should increase then decrease
 				var nonZeroCount int
+
 				for _, item := range resp.Data.List {
 					if item.Total != "" && item.Total != "0" {
 						nonZeroCount++
@@ -1081,10 +1108,13 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 				)
 
 				found := false
+
 				for _, item := range resp.Data.List {
 					if item.DayUtc == yesterday {
 						checkCirculation(t, item.Total, yesterdayExpected)
+
 						found = true
+
 						break
 					}
 				}
@@ -1147,6 +1177,7 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 
 				// compare against last cumulative_circulation in DB (not sum of mints-burns)
 				var dbCumulativeRaw string
+
 				err := ts.DB.Conn().QueryRow(`
             SELECT cumulative_circulation::text
             FROM chain.erc20_hourly_stats
@@ -1198,7 +1229,6 @@ func TestIntegration_explorer_getBlockList(t *testing.T) {
 	)
 	defer ts.Stop()
 
-	ts.DB.Start()
 	ts.API.Start()
 
 	type blockSpec struct {
@@ -1223,10 +1253,10 @@ func TestIntegration_explorer_getBlockList(t *testing.T) {
 
 	for _, s := range specs {
 		block := newTestBlock(s.number)
-		ts.DB.InsertBlock(block)
+		ts.DB.InsertBlock(t, block)
 
 		for i := range s.txnCount {
-			ts.DB.InsertTransaction(newTestTransaction(s.number, i))
+			ts.DB.InsertTransaction(t, newTestTransaction(s.number, i))
 		}
 	}
 
@@ -1390,7 +1420,6 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 	)
 	defer ts.Stop()
 
-	ts.DB.Start()
 	ts.API.Start()
 
 	toAddr := "0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"
@@ -1399,7 +1428,7 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 	addr2 := "0xCCCC000000000000000000000000000000000003"
 
 	for bn := uint64(1); bn <= 3; bn++ {
-		ts.DB.InsertBlock(newTestBlock(bn))
+		ts.DB.InsertBlock(t, newTestBlock(bn))
 	}
 
 	type txSpec struct {
@@ -1420,7 +1449,7 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 
 	for _, s := range specs {
 		bn := hexutil.Uint64(s.blockNumber)
-		ts.DB.InsertTransaction(&types.Transaction{
+		ts.DB.InsertTransaction(t, &types.Transaction{
 			Hash:        s.hash,
 			BlockNumber: &bn,
 			BlockHash:   func() *string { h := fmt.Sprintf("0x%064x", s.blockNumber); return &h }(),
@@ -1708,7 +1737,6 @@ func TestIntegration_explorer_getBlockTransactionCount(t *testing.T) {
 	)
 	defer ts.Stop()
 
-	ts.DB.Start()
 	ts.API.Start()
 
 	type blockSpec struct {
@@ -1729,10 +1757,10 @@ func TestIntegration_explorer_getBlockTransactionCount(t *testing.T) {
 	blockTxnCount := make(map[uint64]int, len(specs))
 
 	for _, s := range specs {
-		ts.DB.InsertBlock(newTestBlock(s.number))
+		ts.DB.InsertBlock(t, newTestBlock(s.number))
 
 		for i := range s.txnCount {
-			ts.DB.InsertTransaction(newTestTransaction(s.number, i))
+			ts.DB.InsertTransaction(t, newTestTransaction(s.number, i))
 		}
 
 		blockTxnCount[s.number] = s.txnCount
@@ -1776,6 +1804,7 @@ func TestIntegration_explorer_getBlockTransactionCount(t *testing.T) {
 
 func newTestBlock(blockNumber uint64) *types.Block {
 	hash := fmt.Sprintf("0x%064x", blockNumber)
+
 	parentHash := fmt.Sprintf("0x%064x", blockNumber-1)
 	if blockNumber == 0 {
 		parentHash = "0x" + strings.Repeat("0", 64)

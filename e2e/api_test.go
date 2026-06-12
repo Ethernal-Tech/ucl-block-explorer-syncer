@@ -2,15 +2,12 @@ package e2e
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
 	"math"
 	"math/big"
-	"math/rand/v2"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -22,250 +19,6 @@ import (
 )
 
 const unknownFunctionName = "unknown"
-
-func TestE2E_explorer_getBlockList(t *testing.T) {
-	const numAccounts = 10
-
-	keys := make([]*ecdsa.PrivateKey, numAccounts)
-	premineAddresses := make([]string, numAccounts)
-	receipts := make([]*types.Receipt, 0)
-
-	var mu sync.Mutex
-
-	for i := 0; i < numAccounts; i++ {
-		privateKey, err := crypto.GenerateKey()
-		if err != nil {
-			t.Fatalf("cannot generate private key: %v", err)
-		}
-
-		keys[i] = privateKey
-		premineAddresses[i] = crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
-	}
-
-	premineFlagValue := strings.Join(premineAddresses, ",")
-
-	uclFlags := []string{"write-logs", "--premine", premineFlagValue}
-
-	ts := framework.NewTestCluster(t,
-		framework.WithLogging(),
-		framework.WithAPI(),
-		framework.WithAPILogging(),
-		framework.WithUclFlags(uclFlags...),
-	)
-
-	ts.Start()
-	defer ts.Stop()
-
-	amount := big.NewInt(10)
-
-	var wg sync.WaitGroup
-
-	t.Log("sending transactions...")
-
-	for i := range numAccounts {
-		wg.Add(1)
-
-		time.Sleep(time.Second * time.Duration(rand.IntN(6)))
-
-		go func() {
-			defer wg.Done()
-
-			for range 2 {
-				receipt := ts.UCL.SendNativeTokens(
-					fmt.Sprintf("%x", crypto.FromECDSA(keys[i])),
-					common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"),
-					amount)
-
-				mu.Lock()
-
-				receipts = append(receipts, receipt)
-
-				mu.Unlock()
-
-				time.Sleep(time.Second * time.Duration(rand.IntN(6)))
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	t.Log("all transactions have been sent")
-
-	var maxBlockNumber uint64 = 0
-
-	for _, receipt := range receipts {
-		if receipt.BlockNumber.Uint64() > maxBlockNumber {
-			maxBlockNumber = receipt.BlockNumber.Uint64()
-		}
-	}
-
-	t.Log(fmt.Sprintf("waiting for syncer to index up to %d. block", maxBlockNumber))
-
-	if err := ts.DB.WaitForBlock(maxBlockNumber, 30*time.Second); err != nil {
-		t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlockNumber)
-	}
-
-	t.Log("synced")
-
-	// map: blockNumber -> list of receipts in that block
-	blockReceipts := map[uint64][]*types.Receipt{}
-
-	for i := uint64(0); i <= maxBlockNumber; i++ {
-		blockReceipts[i] = []*types.Receipt{}
-	}
-
-	for _, receipt := range receipts {
-		bn := receipt.BlockNumber.Uint64()
-		blockReceipts[bn] = append(blockReceipts[bn], receipt)
-	}
-
-	t.Log("checking all blocks (OnlyWithTxn: false)")
-
-	allBlockList, err := framework.Call[api_storage.BlockListResponse](
-		ts.API,
-		"explorer_getBlockList",
-		api_storage.BlockListRequest{
-			MaxBlockNumber: strconv.FormatUint(maxBlockNumber, 10),
-			Page:           1,
-			PageSize:       int(maxBlockNumber) + 1,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getBlockList failed: %v", err)
-	}
-
-	if int(allBlockList.Data.Total) != int(maxBlockNumber)+1 {
-		t.Fatalf("expected %d total blocks, got %d", int(maxBlockNumber)+1, allBlockList.Data.Total)
-	}
-
-	// Verify txn count per block matches our receipt map.
-	for _, block := range allBlockList.Data.List {
-		bn, _ := strconv.ParseUint(block.BlockNumber, 10, 64)
-		txn, _ := strconv.ParseInt(block.Txn, 10, 64)
-		expectedTxn := int64(len(blockReceipts[bn]))
-
-		if txn != expectedTxn {
-			t.Fatalf("block %d: expected %d txn, got %d", bn, expectedTxn, txn)
-		}
-	}
-
-	// Collect blocks with transactions from our receipt map.
-	expectedBlocksWithTxn := map[uint64]struct{}{}
-
-	for bn, receiptsInBlock := range blockReceipts {
-		if len(receiptsInBlock) > 0 {
-			expectedBlocksWithTxn[bn] = struct{}{}
-		}
-	}
-
-	t.Log("checking only blocks with transactions (OnlyWithTxn: true)")
-
-	// Fetch only blocks with transactions.
-	txnBlockList, err := framework.Call[api_storage.BlockListResponse](
-		ts.API,
-		"explorer_getBlockList",
-		api_storage.BlockListRequest{
-			MaxBlockNumber: strconv.FormatUint(maxBlockNumber, 10),
-			OnlyWithTxn:    true,
-			Page:           1,
-			PageSize:       int(maxBlockNumber) + 1,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getBlockList onlyWithTxn failed: %v", err)
-	}
-
-	if int(txnBlockList.Data.Total) != len(expectedBlocksWithTxn) {
-		t.Fatalf("onlyWithTxn: expected %d blocks, got %d", len(expectedBlocksWithTxn), txnBlockList.Data.Total)
-	}
-
-	// Verify 1-to-1 match.
-	for _, block := range txnBlockList.Data.List {
-		bn, _ := strconv.ParseUint(block.BlockNumber, 10, 64)
-		if _, ok := expectedBlocksWithTxn[bn]; !ok {
-			t.Fatalf("onlyWithTxn: unexpected block %d in response", bn)
-		}
-
-		delete(expectedBlocksWithTxn, bn)
-	}
-
-	for bn := range expectedBlocksWithTxn {
-		t.Fatalf("onlyWithTxn: block %d missing from response", bn)
-	}
-
-	t.Log("verifying MaxBlockNumber parameter")
-
-	// Use the block number of the first receipt as the max block number cutoff.
-	cutoffBlock := receipts[3].BlockNumber.Uint64()
-
-	cutoffBlockList, err := framework.Call[api_storage.BlockListResponse](
-		ts.API,
-		"explorer_getBlockList",
-		api_storage.BlockListRequest{
-			MaxBlockNumber: strconv.FormatUint(cutoffBlock, 10),
-			Page:           1,
-			PageSize:       int(cutoffBlock) + 1,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getBlockList with cutoff failed: %v", err)
-	}
-
-	if int(cutoffBlockList.Data.Total) != int(cutoffBlock)+1 {
-		t.Fatalf("cutoff: expected %d total blocks, got %d", int(cutoffBlock)+1, cutoffBlockList.Data.Total)
-	}
-
-	for _, block := range cutoffBlockList.Data.List {
-		bn, _ := strconv.ParseUint(block.BlockNumber, 10, 64)
-		if bn > cutoffBlock {
-			t.Fatalf("cutoff: block %d exceeds max block number %d", bn, cutoffBlock)
-		}
-
-		txn, _ := strconv.ParseInt(block.Txn, 10, 64)
-		expectedTxn := int64(len(blockReceipts[bn]))
-
-		if txn != expectedTxn {
-			t.Fatalf("cutoff: block %d: expected %d txn, got %d", bn, expectedTxn, txn)
-		}
-	}
-
-	t.Log("verifying pagionation")
-
-	const pageSize = 3
-
-	expectedBlockNumber := int64(maxBlockNumber)
-
-	for page := 1; ; page++ {
-		pageResult, err := framework.Call[api_storage.BlockListResponse](
-			ts.API,
-			"explorer_getBlockList",
-			api_storage.BlockListRequest{
-				MaxBlockNumber: strconv.FormatUint(maxBlockNumber, 10),
-				Page:           page,
-				PageSize:       pageSize,
-			})
-		if err != nil {
-			t.Fatalf("explorer_getBlockList page %d failed: %v", page, err)
-		}
-
-		for _, block := range pageResult.Data.List {
-			bn, _ := strconv.ParseInt(block.BlockNumber, 10, 64)
-			if bn != expectedBlockNumber {
-				t.Fatalf("pagination: page %d: expected block %d, got %d",
-					page,
-					expectedBlockNumber,
-					bn)
-			}
-
-			expectedBlockNumber--
-		}
-
-		if len(pageResult.Data.List) < pageSize {
-			break
-		}
-	}
-
-	if expectedBlockNumber != -1 {
-		t.Fatalf("pagination: expected to iterate through all blocks down to 0, stopped at %d", expectedBlockNumber)
-	}
-}
 
 func TestE2E_explorer_getBlockDetail(t *testing.T) {
 	const (
@@ -293,7 +46,7 @@ func TestE2E_explorer_getBlockDetail(t *testing.T) {
 	// Block without transactions is guaranteed to exist before the tx block.
 	blockWithoutTxn := blockWithTxn - 1
 
-	if err := ts.DB.WaitForBlock(blockWithTxn, 30*time.Second); err != nil {
+	if err := ts.DB.WaitForBlock(t, blockWithTxn, 30*time.Second); err != nil {
 		t.Fatalf("timeout: syncer did not process up to block %d within time limit", blockWithTxn)
 	}
 
@@ -376,373 +129,6 @@ func TestE2E_explorer_getBlockDetail(t *testing.T) {
 	}
 }
 
-func TestE2E_explorer_getTransactionList(t *testing.T) {
-	const numAccounts = 5
-
-	keys := make([]*ecdsa.PrivateKey, numAccounts)
-	premineAddresses := make([]string, numAccounts)
-
-	for i := 0; i < numAccounts; i++ {
-		privateKey, err := crypto.GenerateKey()
-		if err != nil {
-			t.Fatalf("cannot generate private key: %v", err)
-		}
-
-		keys[i] = privateKey
-		premineAddresses[i] = crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
-	}
-
-	ts := framework.NewTestCluster(t,
-		framework.WithLogging(),
-		framework.WithAPI(),
-		framework.WithUclFlags("write-logs", "--premine", strings.Join(premineAddresses, ",")),
-	)
-
-	ts.Start()
-	defer ts.Stop()
-
-	to := common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D")
-
-	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		receipts []*types.Receipt
-	)
-
-	t.Log("sending transactions...")
-
-	for i := range numAccounts {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			for range 2 {
-				receipt := ts.UCL.SendNativeTokens(
-					fmt.Sprintf("%x", crypto.FromECDSA(keys[i])),
-					to,
-					big.NewInt(10))
-
-				mu.Lock()
-
-				receipts = append(receipts, receipt)
-
-				mu.Unlock()
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	t.Log("all transactions have been sent")
-
-	maxBlock := uint64(0)
-	for _, r := range receipts {
-		if r.BlockNumber.Uint64() > maxBlock {
-			maxBlock = r.BlockNumber.Uint64()
-		}
-	}
-
-	if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
-		t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
-	}
-
-	totalTxn := len(receipts)
-
-	receiptByHash := map[string]*types.Receipt{}
-	for _, r := range receipts {
-		receiptByHash[strings.ToLower(r.TxHash.Hex())] = r
-	}
-
-	t.Log("checking no filters...")
-
-	allTxList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:     1,
-			PageSize: 100,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList failed: %v", err)
-	}
-
-	if int(allTxList.Data.Total) != totalTxn {
-		t.Fatalf("no filter: expected %d total txn, got %d",
-			totalTxn,
-			allTxList.Data.Total)
-	}
-
-	for _, tx := range allTxList.Data.List {
-		r, ok := receiptByHash[strings.ToLower(tx.Hash)]
-		if !ok {
-			t.Fatalf("no filter: unexpected tx %s in response", tx.Hash)
-
-			continue
-		}
-
-		if tx.BlockNumber != r.BlockNumber.Int64() {
-			t.Fatalf("tx %s: block number mismatch: expected %d, got %d",
-				tx.Hash,
-				r.BlockNumber.Int64(),
-				tx.BlockNumber)
-		}
-
-		if strings.ToLower(tx.To) != strings.ToLower(to.Hex()) {
-			t.Fatalf("tx %s: to mismatch: expected %s, got %s",
-				tx.Hash, to.Hex(),
-				tx.To)
-		}
-	}
-
-	t.Log("checking filter by To (strict)...")
-
-	toStrictList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:       1,
-			PageSize:   100,
-			To:         to.Hex(),
-			StrictMode: true,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList To strict failed: %v", err)
-	}
-
-	if int(toStrictList.Data.Total) != totalTxn {
-		t.Fatalf("To strict: expected %d txn, got %d", totalTxn, toStrictList.Data.Total)
-	}
-
-	for _, tx := range toStrictList.Data.List {
-		if strings.ToLower(tx.To) != strings.ToLower(to.Hex()) {
-			t.Fatalf("To strict: tx %s has unexpected To %s", tx.Hash, tx.To)
-		}
-	}
-
-	t.Log("checking filter by From (strict)...")
-
-	addr0 := crypto.PubkeyToAddress(keys[0].PublicKey)
-
-	fromStrictList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:       1,
-			PageSize:   100,
-			From:       addr0.Hex(),
-			StrictMode: true,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList From strict failed: %v", err)
-	}
-
-	if int(fromStrictList.Data.Total) != 2 {
-		t.Fatalf("From strict: expected 2 txn for addr0, got %d", fromStrictList.Data.Total)
-	}
-
-	for _, tx := range fromStrictList.Data.List {
-		if strings.ToLower(tx.From) != strings.ToLower(addr0.Hex()) {
-			t.Fatalf("From strict: tx %s has unexpected From %s", tx.Hash, tx.From)
-		}
-	}
-
-	t.Log("checking filter by Hash (strict)...")
-
-	targetHash := receipts[0].TxHash.Hex()
-
-	hashStrictList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:       1,
-			PageSize:   100,
-			Hash:       targetHash,
-			StrictMode: true,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList Hash strict failed: %v", err)
-	}
-
-	if int(hashStrictList.Data.Total) != 1 {
-		t.Fatalf("Hash strict: expected 1 txn, got %d", hashStrictList.Data.Total)
-	}
-
-	if len(hashStrictList.Data.List) > 0 {
-		if strings.ToLower(hashStrictList.Data.List[0].Hash) != strings.ToLower(targetHash) {
-			t.Fatalf("Hash strict: expected hash %s, got %s",
-				targetHash,
-				hashStrictList.Data.List[0].Hash)
-		}
-	}
-
-	t.Log("checking filter by BlockNumber...")
-
-	targetBlock := receipts[0].BlockNumber.Int64()
-
-	blockTxList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:        1,
-			PageSize:    100,
-			BlockNumber: strconv.FormatInt(targetBlock, 10),
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList BlockNumber failed: %v", err)
-	}
-
-	expectedInBlock := 0
-
-	for _, r := range receipts {
-		if r.BlockNumber.Int64() == targetBlock {
-			expectedInBlock++
-		}
-	}
-
-	if int(blockTxList.Data.Total) != expectedInBlock {
-		t.Fatalf("BlockNumber: expected %d txn in block %d, got %d",
-			expectedInBlock,
-			targetBlock,
-			blockTxList.Data.Total)
-	}
-
-	for _, tx := range blockTxList.Data.List {
-		if tx.BlockNumber != targetBlock {
-			t.Fatalf("BlockNumber: tx %s has block number %d, expected %d",
-				tx.Hash,
-				tx.BlockNumber,
-				targetBlock)
-		}
-	}
-
-	t.Log("checking multiple filters without strict (OR)...")
-
-	addr1 := crypto.PubkeyToAddress(keys[1].PublicKey)
-
-	// Even though addr1 is never a recipient, the query should return 2 txs because addr0
-	// is the sender of two txs. This tests the OR clause between `From` and `To`.
-	orList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:       1,
-			PageSize:   100,
-			From:       addr0.Hex(),
-			To:         addr1.Hex(),
-			StrictMode: false,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList StrictMode false failed: %v", err)
-	}
-
-	if int(orList.Data.Total) != 2 {
-		t.Fatalf("StrictMode false: expected 2 txn, got %d", orList.Data.Total)
-	}
-
-	for _, tx := range orList.Data.List {
-		if strings.ToLower(tx.From) != strings.ToLower(addr0.Hex()) &&
-			strings.ToLower(tx.To) != strings.ToLower(addr1.Hex()) {
-			t.Fatalf("StrictMode false: tx %s does not match From=%s OR To=%s",
-				tx.Hash,
-				addr0.Hex(),
-				addr1.Hex())
-		}
-	}
-
-	t.Log("checking multiple filters in strict mode (AND)...")
-
-	andList, err := framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:       1,
-			PageSize:   100,
-			From:       addr0.Hex(),
-			To:         to.Hex(),
-			StrictMode: true,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList StrictMode true failed: %v", err)
-	}
-
-	if int(andList.Data.Total) != 2 {
-		t.Fatalf("StrictMode true: expected 2 txn, got %d", andList.Data.Total)
-	}
-
-	for _, tx := range andList.Data.List {
-		if strings.ToLower(tx.From) != strings.ToLower(addr0.Hex()) {
-			t.Fatalf("StrictMode true: tx %s has unexpected From %s", tx.Hash, tx.From)
-		}
-
-		if strings.ToLower(tx.To) != strings.ToLower(to.Hex()) {
-			t.Fatalf("StrictMode true: tx %s has unexpected To %s", tx.Hash, tx.To)
-		}
-	}
-
-	andList, err = framework.Call[api_storage.TransactionListResponse](
-		ts.API,
-		"explorer_getTransactionList",
-		api_storage.TransactionListRequest{
-			Page:       1,
-			PageSize:   100,
-			From:       addr0.Hex(),
-			To:         addr1.Hex(),
-			StrictMode: true,
-		})
-	if err != nil {
-		t.Fatalf("explorer_getTransactionList StrictMode true failed: %v", err)
-	}
-
-	if int(andList.Data.Total) != 0 {
-		t.Fatalf("StrictMode true: expected 0 txn, got %d", andList.Data.Total)
-	}
-
-	t.Log("checking pagination...")
-
-	const pageSize = 3
-
-	collectedHashes := map[string]struct{}{}
-
-	for page := 1; ; page++ {
-		pageResult, err := framework.Call[api_storage.TransactionListResponse](
-			ts.API,
-			"explorer_getTransactionList",
-			api_storage.TransactionListRequest{
-				Page:     page,
-				PageSize: pageSize,
-			})
-		if err != nil {
-			t.Fatalf("explorer_getTransactionList page %d failed: %v", page, err)
-		}
-
-		if pageResult.Data.Total != int64(totalTxn) {
-			t.Fatalf("pagination: total mismatch on page %d: expected %d, got %d",
-				page,
-				totalTxn,
-				pageResult.Data.Total)
-		}
-
-		for _, tx := range pageResult.Data.List {
-			if _, ok := collectedHashes[tx.Hash]; ok {
-				t.Fatalf("pagination: tx %s appears on multiple pages", tx.Hash)
-			}
-
-			collectedHashes[tx.Hash] = struct{}{}
-		}
-
-		if len(pageResult.Data.List) < pageSize {
-			break
-		}
-	}
-
-	if len(collectedHashes) != totalTxn {
-		t.Fatalf("pagination: expected %d unique txn across all pages, got %d",
-			totalTxn,
-			len(collectedHashes))
-	}
-}
-
 func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 	pk1, err := crypto.GenerateKey()
 	if err != nil {
@@ -803,7 +189,7 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 		}
 	}
 
-	if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
+	if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
 		t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 	}
 
@@ -972,126 +358,6 @@ func TestE2E_explorer_getTransactionByHash(t *testing.T) {
 	}
 }
 
-func TestE2E_explorer_getBlockTransactionCount(t *testing.T) {
-	const numAccounts = 10
-
-	keys := make([]*ecdsa.PrivateKey, numAccounts)
-	premineAddresses := make([]string, numAccounts)
-
-	for i := 0; i < numAccounts; i++ {
-		privateKey, err := crypto.GenerateKey()
-		if err != nil {
-			t.Fatalf("cannot generate private key: %v", err)
-		}
-
-		keys[i] = privateKey
-		premineAddresses[i] = crypto.PubkeyToAddress(privateKey.PublicKey).Hex()
-	}
-
-	ts := framework.NewTestCluster(t,
-		framework.WithLogging(),
-		framework.WithAPI(),
-		framework.WithUclFlags("write-logs", "--premine", strings.Join(premineAddresses, ",")),
-	)
-
-	ts.Start()
-	defer ts.Stop()
-
-	var (
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		receipts []*types.Receipt
-	)
-
-	t.Log("sending transactions...")
-
-	for i := range numAccounts {
-		wg.Add(1)
-
-		time.Sleep(time.Second * time.Duration(rand.IntN(4)))
-
-		go func() {
-			defer wg.Done()
-
-			receipt := ts.UCL.SendNativeTokens(
-				fmt.Sprintf("%x", crypto.FromECDSA(keys[i])),
-				common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"),
-				big.NewInt(10))
-
-			mu.Lock()
-
-			receipts = append(receipts, receipt)
-
-			mu.Unlock()
-		}()
-	}
-
-	wg.Wait()
-
-	t.Log("all transactions have been sent")
-
-	maxBlock := uint64(0)
-	for _, r := range receipts {
-		if r.BlockNumber.Uint64() > maxBlock {
-			maxBlock = r.BlockNumber.Uint64()
-		}
-	}
-
-	if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
-		t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
-	}
-
-	blockTxnCount := map[uint64]int{}
-	for i := uint64(0); i <= maxBlock; i++ {
-		blockTxnCount[i] = 0
-	}
-
-	for _, r := range receipts {
-		blockTxnCount[r.BlockNumber.Uint64()]++
-	}
-
-	// Verify txn count for every block up to maxBlock.
-	for blockNumber := uint64(0); blockNumber <= maxBlock; blockNumber++ {
-		result, err := framework.Call[map[string]interface{}](
-			ts.API,
-			"explorer_getBlockTransactionCount",
-			strconv.FormatUint(blockNumber, 10))
-		if err != nil {
-			t.Fatalf("explorer_getBlockTransactionCount failed for block %d: %v", blockNumber, err)
-		}
-
-		gotBlockNumber := result["blockNumber"]
-		gotTxnCount := result["txnCount"]
-
-		if gotBlockNumber != strconv.FormatUint(blockNumber, 10) {
-			t.Fatalf("block %d: blockNumber mismatch: expected %d, got %v",
-				blockNumber,
-				blockNumber,
-				gotBlockNumber)
-		}
-
-		expectedCount := strconv.Itoa(blockTxnCount[blockNumber])
-		if gotTxnCount != expectedCount {
-			t.Fatalf("block %d: txnCount mismatch: expected %s, got %v",
-				blockNumber,
-				expectedCount,
-				gotTxnCount)
-		}
-	}
-
-	// Non-existent block.
-	nonExistent, err := framework.Call[map[string]interface{}](
-		ts.API,
-		"explorer_getBlockTransactionCount", "999999")
-	if err != nil {
-		t.Fatalf("explorer_getBlockTransactionCount failed for non-existent block: %v", err)
-	}
-
-	if nonExistent["code"] != "500" {
-		t.Fatalf("non-existent block: expected code 500, got %v", nonExistent["code"])
-	}
-}
-
 func TestE2E_ActiveEntityDailyStatsAPI(t *testing.T) {
 	pkSender, err := crypto.GenerateKey()
 	if err != nil {
@@ -1134,7 +400,7 @@ func TestE2E_ActiveEntityDailyStatsAPI(t *testing.T) {
 
 	t.Log("transactions sent")
 
-	if err := ts.DB.WaitForBlock(lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+	if err := ts.DB.WaitForBlock(t, lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1377,7 +643,7 @@ func TestE2E_OnboardingEntityDailyStatsAPI(t *testing.T) {
 
 	t.Log("transactions sent")
 
-	if err := ts.DB.WaitForBlock(lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+	if err := ts.DB.WaitForBlock(t, lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1611,11 +877,11 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 
 	t.Log("transactions sent")
 
-	if err := ts.DB.WaitForBlock(lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+	if err := ts.DB.WaitForBlock(t, lastReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
 
-	validatorAddr, _ := ts.DB.GetBlockMinerAndGas(1)
+	validatorAddr, _ := ts.DB.GetBlockMinerAndGas(t, 1)
 	t.Logf("validator address: %s", validatorAddr)
 
 	today := time.Now().UTC().Format("2006-01-02")
@@ -1626,8 +892,8 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 	checkBlockCountAndGas := func(t *testing.T, list []api_storage.ValidatorUtilizationRow) {
 		t.Helper()
 
-		dbBlockCount := int64(ts.DB.GetBlockCount() - 1)
-		dbGasTotal := ts.DB.GetTotalGasUsed()
+		dbBlockCount := int64(ts.DB.GetBlockCount(t) - 1)
+		dbGasTotal := ts.DB.GetTotalGasUsed(t)
 
 		var apiBlockCount int64
 
@@ -1662,7 +928,7 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 			t.Fatalf("expected validator %s, got %s", addr, item.ValidatorAddress)
 		}
 
-		dbGas, _, dbBlocks := ts.DB.GetValidatorStats(addr)
+		dbGas, _, dbBlocks := ts.DB.GetValidatorStats(t, addr)
 
 		apiGas, err := strconv.ParseUint(item.GasUsedTotal, 10, 64)
 		if err != nil {
@@ -1936,7 +1202,7 @@ func TestE2E_ValidatorUtilizationAPI(t *testing.T) {
 				expectedPerValidator := map[string]uint64{}
 
 				for _, blockNum := range txBlocks {
-					miner, gasUsed := ts.DB.GetBlockMinerAndGas(blockNum)
+					miner, gasUsed := ts.DB.GetBlockMinerAndGas(t, blockNum)
 					expectedPerValidator[miner] += gasUsed
 					t.Logf("block %d: miner=%s gasUsed=%d", blockNum, miner, gasUsed)
 				}

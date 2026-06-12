@@ -111,13 +111,14 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 
 		t.Logf("waiting for syncer to process up to block %d...", maxBlockNumber)
 
-		if err := ts.DB.WaitForBlock(maxBlockNumber, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlockNumber, 30*time.Second); err != nil {
 			t.Fatalf("%s", err.Error())
 		}
 
 		for i := range numAccounts {
 			tx := ts.DB.GetTransactionByHash(
 				context.TODO(),
+				t,
 				receipts[i].TxHash.Hex())
 
 			if strings.ToLower(*tx.BlockHash) != strings.ToLower(receipts[i].BlockHash.Hex()) ||
@@ -180,11 +181,11 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			transferReceipt1.BlockNumber.Uint64(),
 		})
 
-		if err := ts.DB.WaitForBlock(maxBlockNumber1, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlockNumber1, 30*time.Second); err != nil {
 			t.Fatalf("%s", err.Error())
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
+		ts.DB.AddERC20ToWatchlist(t, erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -207,7 +208,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 
 		t.Logf("waiting for syncer to process up to block %d...", maxBlockNumber2)
 
-		if err := ts.DB.WaitForERC20Block(erc20, maxBlockNumber2, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForERC20Block(t, erc20, maxBlockNumber2, 30*time.Second); err != nil {
 			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlockNumber2)
 		}
 
@@ -290,7 +291,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			expected[hour] = stat
 		}
 
-		actual := ts.DB.GetERC20TokensHourlyStatsFromDB(ctx)
+		actual := ts.DB.GetERC20TokensHourlyStatsFromDB(ctx, t)
 
 		actualForToken, ok := actual[erc20.Hex()]
 		if !ok {
@@ -350,7 +351,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			active    bool
 		}
 
-		if err := ts.DB.WaitForBlock(deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", deployReceipt.BlockNumber.Uint64())
 		}
 
@@ -358,7 +359,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			{deployReceipt, framework.Erc20ConstructorMintAmount, nil, nil, false},
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
+		ts.DB.AddERC20ToWatchlist(t, erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -387,11 +388,11 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		maxBlock := allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
 
-		if err := ts.DB.WaitForERC20Block(erc20, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForERC20Block(t, erc20, maxBlock, 30*time.Second); err != nil {
 			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
 		}
 
-		ts.DB.RemoveERC20FromWatchlist(erc20)
+		ts.DB.RemoveERC20FromWatchlist(t, erc20)
 
 		// We need to wait a few seconds because syncer periodically checks watchlist. If we don't do so,
 		// it can happen that the next round occurs and ERC-20 token (from syncer's perspective) is still
@@ -404,11 +405,11 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
 
-		if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
+		ts.DB.AddERC20ToWatchlist(t, erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -419,11 +420,11 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
 
-		if err := ts.DB.WaitForERC20Block(erc20, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForERC20Block(t, erc20, maxBlock, 30*time.Second); err != nil {
 			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
 		}
 
-		ts.DB.RemoveERC20FromWatchlist(erc20)
+		ts.DB.RemoveERC20FromWatchlist(t, erc20)
 
 		// We need to wait a few seconds because syncer periodically checks watchlist. If we don't do so,
 		// it can happen that the next round occurs and ERC-20 token (from syncer's perspective) is still
@@ -435,11 +436,11 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(false)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		if err := ts.DB.WaitForBlock(maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
-		ts.DB.AddERC20ToWatchlist(erc20.Hex(), "TTK", 18)
+		ts.DB.AddERC20ToWatchlist(t, erc20.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(time.Second * 10)
@@ -451,7 +452,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
 
-		if err := ts.DB.WaitForERC20Block(erc20, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForERC20Block(t, erc20, maxBlock, 30*time.Second); err != nil {
 			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlock)
 		}
 
@@ -464,7 +465,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			return blocks
 		}())
 
-		if err := ts.DB.WaitForERC20Block(erc20, maxBlockNumber, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForERC20Block(t, erc20, maxBlockNumber, 30*time.Second); err != nil {
 			t.Fatalf("timeout: erc20 syncer did not process up to block %d within time limit", maxBlockNumber)
 		}
 
@@ -527,7 +528,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			expected[hour] = stat
 		}
 
-		actual := ts.DB.GetERC20TokensHourlyStatsFromDB(ctx)
+		actual := ts.DB.GetERC20TokensHourlyStatsFromDB(ctx, t)
 
 		actualForToken, ok := actual[erc20.Hex()]
 		if !ok {
@@ -623,7 +624,7 @@ func TestE2E_EOAActivity(t *testing.T) {
 		synced := false
 
 		for i := 0; i < 30; i++ {
-			lastBlockPtr, err := ts.DB.GetLastProcessedEOAActivityBlock()
+			lastBlockPtr, err := ts.DB.GetLastProcessedEOAActivityBlock(t)
 			if err != nil {
 				t.Fatalf("%v", err)
 			}
@@ -671,7 +672,6 @@ func TestE2E_EOAActivity(t *testing.T) {
 		),
 	)
 
-	ts.DB.Start()
 	ts.UCL.Start()
 
 	defer ts.Stop()
@@ -749,7 +749,7 @@ func TestE2E_EOAActivity(t *testing.T) {
 		}
 	}
 
-	actual := ts.DB.GetEOAParticipationStats(ctx)
+	actual := ts.DB.GetEOAParticipationStats(ctx, t)
 
 	if len(actual) != len(expected) {
 		t.Errorf("expected %d addresses, got %d", len(expected), len(actual))
@@ -823,7 +823,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	t.Log("waiting for syncer to process up to block 5...")
 
-	if err := testCluster.DB.WaitForBlock(5, 30*time.Second); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -831,7 +831,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	testCluster.UCL.ChangeNodeRpcUrl(1)
 
-	lastProcessedBlock := testCluster.DB.GetLastBlockNumber()
+	lastProcessedBlock := testCluster.DB.GetLastBlockNumber(t)
 
 	t.Logf("last processed block by syncer before restart is %v", lastProcessedBlock)
 
@@ -845,7 +845,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	t.Logf("waiting for syncer to process up to block %v...", receipt.BlockNumber.Uint64())
 
-	if err := testCluster.DB.WaitForBlock(receipt.BlockNumber.Uint64(), time.Minute); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, receipt.BlockNumber.Uint64(), time.Minute); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -854,7 +854,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	testCluster.DB.GetBlockTimestamp(context.TODO(), t, lastProcessedBlock+1)
 
-	txCount := testCluster.DB.GetTxCountAfterBlock(lastProcessedBlock)
+	txCount := testCluster.DB.GetTxCountAfterBlock(t, lastProcessedBlock)
 	t.Logf("transactions indexed after failover: %d", txCount)
 
 	if txCount < 2 {
@@ -909,11 +909,12 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 		t.Logf("erc20 deployed at %s", erc20ContractAddr.Hex())
 
 		if err := testCluster.DB.WaitForBlock(
+			t,
 			deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
 			t.Fatal("syncer can't get to deployment block")
 		}
 
-		testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr.Hex(), "TTK", 18)
+		testCluster.DB.AddERC20ToWatchlist(t, erc20ContractAddr.Hex(), "TTK", 18)
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(10 * time.Second)
@@ -925,12 +926,12 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 			receiverAddress,
 			big.NewInt(1000000))
 
-		if err := testCluster.DB.WaitForERC20Block(
+		if err := testCluster.DB.WaitForERC20Block(t,
 			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
 			t.Fatal("syncer can't get to frist mint block")
 		}
 
-		statsBefore := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO())
+		statsBefore := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO(), t)
 
 		tokenStats, exist := statsBefore[erc20ContractAddr.Hex()]
 		if !exist {
@@ -946,7 +947,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 		t.Logf("mint count before failover: %d", mintCountBefore)
 
 		if startFromTip {
-			testCluster.DB.RemoveERC20FromWatchlist(erc20ContractAddr)
+			testCluster.DB.RemoveERC20FromWatchlist(t, erc20ContractAddr)
 		}
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
@@ -970,27 +971,27 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 		testCluster.RestartSyncer(testCluster.UCL.NodeRpcUrl(1))
 
 		if startFromTip {
-			if err := testCluster.DB.WaitForERC20Block(erc20ContractAddr,
+			if err := testCluster.DB.WaitForERC20Block(t, erc20ContractAddr,
 				transferReceipt.BlockNumber.Uint64(), 20*time.Second,
 			); err == nil || !strings.Contains(err.Error(), "timeout") {
 				t.Fatal("should't get erc 20 blocks")
 			}
 		} else {
-			if err := testCluster.DB.WaitForERC20Block(erc20ContractAddr,
+			if err := testCluster.DB.WaitForERC20Block(t, erc20ContractAddr,
 				transferReceipt.BlockNumber.Uint64(), 20*time.Second); err != nil {
 				t.Fatal("can't get to erc20 operations block")
 			}
 		}
 
 		if startFromTip {
-			testCluster.DB.AddERC20ToWatchlist(erc20ContractAddr.Hex(), "TTK", 18)
+			testCluster.DB.AddERC20ToWatchlist(t, erc20ContractAddr.Hex(), "TTK", 18)
 		}
 
 		// We need to wait few seconds because syncer periodically checks watchlist (it's not instant).
 		time.Sleep(10 * time.Second)
 
 		// verify
-		statsAfter := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO())
+		statsAfter := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO(), t)
 
 		tokenStatsAfter, exists := statsAfter[erc20ContractAddr.Hex()]
 		if !exists {
@@ -1076,11 +1077,11 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	t.Log("initial transactions sent")
 
-	testCluster.DB.WaitForBlock(
+	testCluster.DB.WaitForBlock(t,
 		transferReceipt.BlockNumber.Uint64(), 30*time.Second)
 
 	// verify initial EOA activity
-	statsBefore := testCluster.DB.GetEOAParticipationStats(context.TODO())
+	statsBefore := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
 
 	senderKey := senderAddress.Hex()
 	receiverKey := receiverAddress.Hex()
@@ -1109,12 +1110,12 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	testCluster.RestartSyncer(testCluster.UCL.NodeRpcUrl(1))
 	t.Log("syncer restarted on node 1")
 
-	testCluster.DB.WaitForBlock(
+	testCluster.DB.WaitForBlock(t,
 		secondTransferReceipt.BlockNumber.Uint64(),
 		30*time.Second)
 
 	// verify downtime EOA activity is indexed
-	statsAfterFailover := testCluster.DB.GetEOAParticipationStats(context.TODO())
+	statsAfterFailover := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
 
 	senderHoursBefore := len(statsBefore[senderKey])
 	senderHoursAfter := len(statsAfterFailover[senderKey])
@@ -1159,11 +1160,11 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	t.Log("post-failover contract interactions done")
 
-	testCluster.DB.WaitForBlock(
+	testCluster.DB.WaitForBlock(t,
 		erc20TransferReceipt.BlockNumber.Uint64(), 30*time.Second)
 
 	// verify post-failover EOA activity
-	statsFinal := testCluster.DB.GetEOAParticipationStats(context.TODO())
+	statsFinal := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
 
 	thirdKey := thirdAddress.Hex()
 

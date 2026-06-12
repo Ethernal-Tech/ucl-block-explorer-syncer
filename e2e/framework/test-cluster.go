@@ -21,6 +21,7 @@ type TestCluster struct {
 	API      *API
 	t        *testing.T
 	sharedDB bool
+	doneCh   chan struct{}
 }
 
 type Option func(*TestClusterConfig)
@@ -112,48 +113,53 @@ func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 		opt(cfg)
 	}
 
-	fw := &TestCluster{
+	tc := &TestCluster{
 		t:      t,
 		Config: cfg,
 	}
 
-	fw.initLogsDir()
+	tc.initLogsDir()
 
 	// use shared DB if available, otherwise start own
 	if SharedDB != nil {
-		fw.DB = SharedDB
-		fw.DB.SetT(t)
-		fw.DB.TruncateAll()
-		fw.sharedDB = true
+		tc.DB = SharedDB
+		tc.DB.TruncateAll(t)
+		tc.sharedDB = true
 	} else {
-		fw.DB = NewDB(t, cfg.DB, cfg.LogsDir)
+		tc.DB = NewDB(cfg.DB, cfg.LogsDir)
 	}
 
-	fw.UCL = NewUCL(t, cfg.UCL, cfg.LogsDir)
-	fw.Syncer = NewSyncer(t, cfg.Syncer, cfg.DB, cfg.LogsDir)
+	tc.UCL = NewUCL(t, cfg.UCL, cfg.LogsDir)
+	tc.Syncer = NewSyncer(t, cfg.Syncer, cfg.DB, cfg.LogsDir)
 
 	if cfg.WithAPI {
-		fw.API = NewAPI(t, cfg.API, cfg.DB, cfg.LogsDir)
+		tc.API = NewAPI(t, cfg.API, cfg.DB, cfg.LogsDir)
 	}
+
+	tc.doneCh = make(chan struct{})
 
 	sigCh := make(chan os.Signal, 1)
 
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		<-sigCh
-		fw.Stop()
-		os.Exit(1)
+		select {
+		case <-sigCh:
+			tc.Stop()
+			os.Exit(1)
+		case <-tc.doneCh:
+		}
 	}()
 
-	return fw
+	t.Cleanup(func() {
+		close(tc.doneCh)
+		signal.Stop(sigCh)
+	})
+
+	return tc
 }
 
 func (tc *TestCluster) Start() {
-	if !tc.sharedDB {
-		tc.DB.Start()
-	}
-
 	tc.UCL.Start()
 	tc.Syncer.Start()
 
@@ -175,8 +181,8 @@ func (tc *TestCluster) Stop() {
 	}
 }
 
-func (fw *TestCluster) initLogsDir() {
-	name := fw.t.Name()
+func (tc *TestCluster) initLogsDir() {
+	name := tc.t.Name()
 	parent := name
 	sub := ""
 
@@ -192,11 +198,11 @@ func (fw *TestCluster) initLogsDir() {
 	}
 
 	if err := os.MkdirAll(dir, 0750); err != nil {
-		fw.t.Fatalf("failed to create logs dir: %v", err)
+		tc.t.Fatalf("failed to create logs dir: %v", err)
 	}
 
-	fw.Config.LogsDir = dir
-	fw.t.Logf("logs dir: %s", dir)
+	tc.Config.LogsDir = dir
+	tc.t.Logf("logs dir: %s", dir)
 }
 
 func (tc *TestCluster) RestartSyncer(newRpcUrl string) {

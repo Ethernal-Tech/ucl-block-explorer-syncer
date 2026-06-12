@@ -126,11 +126,11 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 		}
 
 		filters += fmt.Sprintf(" AND b.miner = $%d", argIdx)
+
 		args = append(args, validator)
+
 		argIdx++
 	}
-
-	argIdx++
 
 	filters += fmt.Sprintf(" AND b.timestamp >= extract(epoch from $%d::timestamptz)::bigint", argIdx)
 
