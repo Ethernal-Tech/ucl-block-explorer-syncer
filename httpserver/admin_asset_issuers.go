@@ -166,6 +166,7 @@ func (s *Server) handleUpdateAssetIssuer(w http.ResponseWriter, r *http.Request,
 		addr, err := common.NormalizeAddress(asset)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid asset address: %s", asset))
+
 			return
 		}
 

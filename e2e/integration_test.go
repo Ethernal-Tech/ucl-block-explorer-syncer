@@ -550,6 +550,7 @@ func TestIntegration_GetLineData(t *testing.T) {
 		}
 
 		zeroDays := 0
+
 		for _, point := range resp.Data {
 			if point.Count == 0 {
 				zeroDays++
@@ -738,6 +739,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 				}
 
 				var totalMints int64
+
 				for _, item := range resp.Data.List {
 					if item.TokenAddress != tokenAddr2 {
 						t.Fatalf("unexpected token %s", item.TokenAddress)
@@ -1296,6 +1298,7 @@ func TestIntegration_explorer_getBlockList(t *testing.T) {
 	t.Log("checking only blocks with transactions (OnlyWithTxn: true)")
 
 	expectedBlocksWithTxn := map[uint64]struct{}{}
+
 	for _, s := range specs {
 		if s.txnCount > 0 {
 			expectedBlocksWithTxn[s.number] = struct{}{}
@@ -1452,10 +1455,14 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 		ts.DB.InsertTransaction(t, &types.Transaction{
 			Hash:        s.hash,
 			BlockNumber: &bn,
-			BlockHash:   func() *string { h := fmt.Sprintf("0x%064x", s.blockNumber); return &h }(),
-			From:        s.from,
-			To:          &s.to,
-			Input:       "0x",
+			BlockHash: func() *string {
+				h := fmt.Sprintf("0x%064x", s.blockNumber)
+
+				return &h
+			}(),
+			From:  s.from,
+			To:    &s.to,
+			Input: "0x",
 		})
 	}
 
@@ -1582,6 +1589,7 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 	targetBlock := int64(1)
 
 	expectedInBlock := int64(0)
+
 	for _, s := range specs {
 		if int64(s.blockNumber) == targetBlock {
 			expectedInBlock++
@@ -1928,7 +1936,7 @@ func TestIntegration_explorer_getTransactionByHash(t *testing.T) {
 
 	blockHash := block.Hash
 	bn := hexutil.Uint64(blockNumber)
-	blockTimestamp := hexutil.Uint64(block.Timestamp)
+	blockTimestamp := block.Timestamp
 
 	transferHash := "0x" + strings.Repeat("a", 64)
 	deployHash := "0x" + strings.Repeat("b", 64)

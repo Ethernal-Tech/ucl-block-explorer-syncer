@@ -83,6 +83,7 @@ func (d *DB) StartForTestMain() {
 	// wait for ready without *testing.T
 	deadline := time.Now().UTC().Add(30 * time.Second)
 	for time.Now().UTC().Before(deadline) {
+		//nolint:gosec
 		cmd := exec.Command("pg_isready",
 			"-h", d.config.Host,
 			"-p", d.config.Port,
@@ -141,6 +142,8 @@ func (d *DB) TruncateAll(t *testing.T) {
 }
 
 func (d *DB) GetBlockCount(t *testing.T) int {
+	t.Helper()
+
 	var count int
 
 	err := d.conn.QueryRow("SELECT COUNT(*) FROM chain.blocks").Scan(&count)
@@ -207,6 +210,8 @@ type TokenHourlyMap map[string]map[hexutil.Uint64]HourlyStats
 func (d *DB) GetERC20TokensHourlyStatsFromDB(
 	ctx context.Context,
 	t *testing.T) TokenHourlyMap {
+	t.Helper()
+
 	query := `
 		SELECT 
 			token_address, hour_utc, transfer_count, transfer_volume_raw, 
@@ -282,6 +287,8 @@ type EOAActivityMap map[string][]hexutil.Uint64
 func (d *DB) GetEOAParticipationStats(
 	ctx context.Context,
 	t *testing.T) EOAActivityMap {
+	t.Helper()
+
 	query := `
 		SELECT hour_utc, address 
 		FROM chain.entity_hour_participation
@@ -481,6 +488,8 @@ func (d *DB) GetTransactionByHash(
 }
 
 func (d *DB) GetLastBlockNumber(t *testing.T) uint64 {
+	t.Helper()
+
 	var num uint64
 
 	err := d.conn.QueryRow("SELECT COALESCE(MAX(number), 0) FROM chain.blocks").Scan(&num)
@@ -492,6 +501,8 @@ func (d *DB) GetLastBlockNumber(t *testing.T) uint64 {
 }
 
 func (d *DB) GetTxCountAfterBlock(t *testing.T, blockNumber uint64) uint64 {
+	t.Helper()
+
 	var count uint64
 
 	err := d.conn.QueryRow(
@@ -505,6 +516,8 @@ func (d *DB) GetTxCountAfterBlock(t *testing.T, blockNumber uint64) uint64 {
 }
 
 func (d *DB) WaitForBlock(t *testing.T, block uint64, timeout time.Duration) error {
+	t.Helper()
+
 	deadline := time.Now().UTC().Add(timeout)
 	for time.Now().UTC().Before(deadline) {
 		lastBlockPtr, err := d.GetLastProcessedBlock(t)
@@ -523,6 +536,8 @@ func (d *DB) WaitForBlock(t *testing.T, block uint64, timeout time.Duration) err
 }
 
 func (d *DB) WaitForERC20Block(t *testing.T, address common.Address, maxBlock uint64, timeout time.Duration) error {
+	t.Helper()
+
 	deadline := time.Now().UTC().Add(timeout)
 	for time.Now().UTC().Before(deadline) {
 		nextBlock := d.GetERC20NextBlock(t, address)
@@ -537,6 +552,8 @@ func (d *DB) WaitForERC20Block(t *testing.T, address common.Address, maxBlock ui
 }
 
 func (d *DB) GetTotalGasUsed(t *testing.T) uint64 {
+	t.Helper()
+
 	var total uint64
 
 	err := d.conn.QueryRow("SELECT COALESCE(SUM(gas_used), 0) FROM chain.blocks WHERE number > 0").Scan(&total)
@@ -548,6 +565,8 @@ func (d *DB) GetTotalGasUsed(t *testing.T) uint64 {
 }
 
 func (d *DB) GetValidatorStats(t *testing.T, validator string) (gasUsed uint64, gasLimit uint64, blockCount int64) {
+	t.Helper()
+
 	err := d.conn.QueryRow(`
 		SELECT COALESCE(SUM(gas_used), 0), COALESCE(SUM(gas_limit), 0), COUNT(*)
 		FROM chain.blocks WHERE miner = $1 AND number > 0
@@ -560,6 +579,8 @@ func (d *DB) GetValidatorStats(t *testing.T, validator string) (gasUsed uint64, 
 }
 
 func (d *DB) GetBlockMinerAndGas(t *testing.T, blockNumber uint64) (miner string, gasUsed uint64) {
+	t.Helper()
+
 	err := d.conn.QueryRow(`
 		SELECT miner, gas_used FROM chain.blocks WHERE number = $1
 	`, blockNumber).Scan(&miner, &gasUsed)
@@ -740,6 +761,8 @@ func (d *DB) InsertTestERC20HourlyStat(
 	burnVolume string,
 	cumulativeCirculation string,
 ) {
+	t.Helper()
+
 	_, err := d.conn.Exec(`
 		INSERT INTO chain.erc20_hourly_stats (
 			token_address, hour_utc,
