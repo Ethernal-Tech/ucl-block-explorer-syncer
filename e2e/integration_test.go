@@ -1802,6 +1802,339 @@ func TestIntegration_explorer_getBlockTransactionCount(t *testing.T) {
 	}
 }
 
+func TestIntegration_explorer_getBlockDetail(t *testing.T) {
+	ts := framework.NewTestCluster(t,
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+	)
+	defer ts.Stop()
+
+	ts.API.Start()
+
+	blockWithoutTxn := uint64(1)
+	blockWithTxn := uint64(2)
+
+	ts.DB.InsertBlock(t, newTestBlock(0))
+	ts.DB.InsertBlock(t, newTestBlock(blockWithoutTxn))
+	ts.DB.InsertBlock(t, newTestBlock(blockWithTxn))
+
+	ts.DB.InsertTransaction(t, newTestTransaction(blockWithTxn, 0))
+
+	expectedTxnCount := map[uint64]string{
+		blockWithoutTxn: "0",
+		blockWithTxn:    "1",
+	}
+
+	t.Log("checking block details")
+
+	for _, blockNumber := range []uint64{blockWithTxn, blockWithoutTxn} {
+		expectedBlock := newTestBlock(blockNumber)
+
+		detail, err := framework.Call[api_storage.BlockDetailResponse](
+			ts.API,
+			"explorer_getBlockDetail",
+			api_storage.BlockDetailRequest{
+				BlockNumber: strconv.FormatUint(blockNumber, 10),
+			})
+		if err != nil {
+			t.Fatalf("explorer_getBlockDetail failed for block %d: %v", blockNumber, err)
+		}
+
+		if detail.Code != "200" {
+			t.Fatalf("explorer_getBlockDetail returned non-200 code for block %d: %s",
+				blockNumber, detail.Code)
+		}
+
+		if detail.Data.BlockNumber != strconv.FormatUint(blockNumber, 10) {
+			t.Errorf("block %d: blockNumber mismatch: got %s",
+				blockNumber, detail.Data.BlockNumber)
+		}
+
+		if strings.ToLower(detail.Data.BlockHash) != strings.ToLower(expectedBlock.Hash) {
+			t.Errorf("block %d: hash mismatch: expected %s, got %s",
+				blockNumber, expectedBlock.Hash, detail.Data.BlockHash)
+		}
+
+		if detail.Data.Timestamp != int64(uint64(expectedBlock.Timestamp)*1000) {
+			t.Errorf("block %d: timestamp mismatch: expected %d, got %d",
+				blockNumber, uint64(expectedBlock.Timestamp)*1000, detail.Data.Timestamp)
+		}
+
+		if strings.ToLower(detail.Data.ParentHash) != strings.ToLower(expectedBlock.ParentHash) {
+			t.Errorf("block %d: parent hash mismatch: expected %s, got %s",
+				blockNumber, expectedBlock.ParentHash, detail.Data.ParentHash)
+		}
+
+		expectedParentNumber := strconv.FormatUint(blockNumber-1, 10)
+		if detail.Data.ParentBlockNumber != expectedParentNumber {
+			t.Errorf("block %d: parentBlockNumber mismatch: expected %s, got %s",
+				blockNumber, expectedParentNumber, detail.Data.ParentBlockNumber)
+		}
+
+		if detail.Data.GasUsed != uint64(expectedBlock.GasUsed) {
+			t.Errorf("block %d: gas used mismatch: expected %d, got %d",
+				blockNumber, uint64(expectedBlock.GasUsed), detail.Data.GasUsed)
+		}
+
+		if detail.Data.GasLimit != uint64(expectedBlock.GasLimit) {
+			t.Errorf("block %d: gas limit mismatch: expected %d, got %d",
+				blockNumber, uint64(expectedBlock.GasLimit), detail.Data.GasLimit)
+		}
+
+		if detail.Data.Txn != expectedTxnCount[blockNumber] {
+			t.Errorf("block %d: txn count mismatch: expected %s, got %s",
+				blockNumber, expectedTxnCount[blockNumber], detail.Data.Txn)
+		}
+	}
+
+	t.Log("checking the correct handling of non-existent block")
+
+	nonExistent, err := framework.Call[api_storage.BlockDetailResponse](
+		ts.API,
+		"explorer_getBlockDetail",
+		api_storage.BlockDetailRequest{
+			BlockNumber: "999999",
+		})
+	if err != nil {
+		t.Fatalf("explorer_getBlockDetail failed for non-existent block: %v", err)
+	}
+
+	if nonExistent.Code == "200" {
+		t.Errorf("expected non-200 response for non-existent block, got 200")
+	}
+}
+
+func TestIntegration_explorer_getTransactionByHash(t *testing.T) {
+	const unknownFunctionName = "unknown"
+
+	ts := framework.NewTestCluster(t,
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+	)
+	defer ts.Stop()
+
+	ts.API.Start()
+
+	addr1 := "0xAAAA000000000000000000000000000000000001"
+	addr2 := "0xBBBB000000000000000000000000000000000002"
+	erc20Address := "0xCCCC000000000000000000000000000000000003"
+
+	const deployBytecode = "0x608060405234801561001057600080fd5b50"
+
+	const blockNumber = uint64(1)
+
+	block := newTestBlock(blockNumber)
+	ts.DB.InsertBlock(t, block)
+
+	blockHash := block.Hash
+	bn := hexutil.Uint64(blockNumber)
+	blockTimestamp := hexutil.Uint64(block.Timestamp)
+
+	transferHash := "0x" + strings.Repeat("a", 64)
+	deployHash := "0x" + strings.Repeat("b", 64)
+	mintHash := "0x" + strings.Repeat("c", 64)
+
+	// 1. Native token transfer: input "0x", From -> To
+	transferTo := addr2
+	ts.DB.InsertTransaction(t, &types.Transaction{
+		Hash:           transferHash,
+		BlockHash:      &blockHash,
+		BlockNumber:    &bn,
+		BlockTimestamp: &blockTimestamp,
+		From:           addr1,
+		To:             &transferTo,
+		Input:          "0x",
+	})
+
+	// 2. Contract deploy: To is nil/empty, input is contract bytecode
+	ts.DB.InsertTransaction(t, &types.Transaction{
+		Hash:           deployHash,
+		BlockHash:      &blockHash,
+		BlockNumber:    &bn,
+		BlockTimestamp: &blockTimestamp,
+		From:           addr1,
+		To:             nil,
+		Input:          deployBytecode,
+	})
+
+	// 3. ERC-20 mint call: input starts with "mint" function selector (0x40c10f19)
+	mintTo := erc20Address
+	mintInput := "0x40c10f19" + strings.Repeat("0", 56)
+	ts.DB.InsertTransaction(t, &types.Transaction{
+		Hash:           mintHash,
+		BlockHash:      &blockHash,
+		BlockNumber:    &bn,
+		BlockTimestamp: &blockTimestamp,
+		From:           addr1,
+		To:             &mintTo,
+		Input:          mintInput,
+	})
+
+	expectedTimestamp := int64(uint64(block.Timestamp) * 1000)
+
+	t.Log("checking native token transfer transaction details...")
+
+	txTransfer, err := framework.Call[api_storage.TransactionListItem](
+		ts.API,
+		"explorer_getTransactionByHash",
+		transferHash,
+	)
+	if err != nil {
+		t.Fatalf("explorer_getTransactionByHash failed for transfer: %v", err)
+	}
+
+	if txTransfer.BlockNumber != int64(blockNumber) {
+		t.Fatalf("Transfer: BlockNumber mismatch: expected %d, got %d",
+			blockNumber, txTransfer.BlockNumber)
+	}
+
+	if strings.ToLower(txTransfer.Hash) != strings.ToLower(transferHash) {
+		t.Fatalf("Transfer: Hash mismatch: expected %s, got %s", transferHash, txTransfer.Hash)
+	}
+
+	if strings.ToLower(txTransfer.From) != strings.ToLower(addr1) {
+		t.Fatalf("Transfer: From mismatch: expected %s, got %s", addr1, txTransfer.From)
+	}
+
+	if strings.ToLower(txTransfer.To) != strings.ToLower(addr2) {
+		t.Fatalf("Transfer: To mismatch: expected %s, got %s", addr2, txTransfer.To)
+	}
+
+	if txTransfer.ID <= 0 {
+		t.Fatalf("Transfer: invalid ID: %d", txTransfer.ID)
+	}
+
+	if txTransfer.Timestamp != expectedTimestamp {
+		t.Fatalf("Transfer: Timestamp mismatch: expected %d, got %d",
+			expectedTimestamp, txTransfer.Timestamp)
+	}
+
+	if txTransfer.Data != "0x" {
+		t.Fatalf("Transfer: Data is not empty: %s", txTransfer.Data)
+	}
+
+	if txTransfer.Metadata.FunctionName != unknownFunctionName {
+		t.Fatalf("Transfer: Metadata FunctionName is not unknown, got %s",
+			txTransfer.Metadata.FunctionName)
+	}
+
+	t.Log("checking contract deploy transaction details...")
+
+	txDeploy, err := framework.Call[api_storage.TransactionListItem](
+		ts.API,
+		"explorer_getTransactionByHash",
+		deployHash,
+	)
+	if err != nil {
+		t.Fatalf("explorer_getTransactionByHash failed for deploy: %v", err)
+	}
+
+	if txDeploy.BlockNumber != int64(blockNumber) {
+		t.Fatalf("Deploy: BlockNumber mismatch: expected %d, got %d",
+			blockNumber, txDeploy.BlockNumber)
+	}
+
+	if strings.ToLower(txDeploy.Hash) != strings.ToLower(deployHash) {
+		t.Fatalf("Deploy: Hash mismatch: expected %s, got %s", deployHash, txDeploy.Hash)
+	}
+
+	if strings.ToLower(txDeploy.From) != strings.ToLower(addr1) {
+		t.Fatalf("Deploy: From mismatch: expected %s, got %s", addr1, txDeploy.From)
+	}
+
+	if txDeploy.To != "" {
+		t.Fatalf("Deploy: expected To to be empty, got %s", txDeploy.To)
+	}
+
+	if txDeploy.ID <= 0 {
+		t.Errorf("Deploy: invalid ID: %d", txDeploy.ID)
+	}
+
+	if txDeploy.Timestamp != expectedTimestamp {
+		t.Fatalf("Deploy: Timestamp mismatch: expected %d, got %d",
+			expectedTimestamp, txDeploy.Timestamp)
+	}
+
+	if txDeploy.Data != deployBytecode {
+		t.Fatalf("Deploy: invalid Data: expected %s, got %s", deployBytecode, txDeploy.Data)
+	}
+
+	if txDeploy.Metadata.FunctionName != unknownFunctionName {
+		t.Fatalf("Deploy: Metadata FunctionName is not unknown, got %s",
+			txDeploy.Metadata.FunctionName)
+	}
+
+	t.Log("checking contract mint transaction details...")
+
+	txMint, err := framework.Call[api_storage.TransactionListItem](
+		ts.API,
+		"explorer_getTransactionByHash",
+		mintHash,
+	)
+	if err != nil {
+		t.Fatalf("explorer_getTransactionByHash failed for mint: %v", err)
+	}
+
+	if txMint.BlockNumber != int64(blockNumber) {
+		t.Fatalf("Mint: BlockNumber mismatch: expected %d, got %d",
+			blockNumber, txMint.BlockNumber)
+	}
+
+	if strings.ToLower(txMint.Hash) != strings.ToLower(mintHash) {
+		t.Fatalf("Mint: Hash mismatch: expected %s, got %s", mintHash, txMint.Hash)
+	}
+
+	if strings.ToLower(txMint.From) != strings.ToLower(addr1) {
+		t.Fatalf("Mint: From mismatch: expected %s, got %s", addr1, txMint.From)
+	}
+
+	if strings.ToLower(txMint.To) != strings.ToLower(erc20Address) {
+		t.Fatalf("Mint: To mismatch: expected contract %s, got %s", erc20Address, txMint.To)
+	}
+
+	if txMint.ID <= 0 {
+		t.Fatalf("Mint: invalid ID: %d", txMint.ID)
+	}
+
+	if txMint.Timestamp != expectedTimestamp {
+		t.Fatalf("Mint: Timestamp mismatch: expected %d, got %d",
+			expectedTimestamp, txMint.Timestamp)
+	}
+
+	if txMint.Data == "" {
+		t.Fatalf("Mint: expected input data to be present, got empty string")
+	}
+
+	if txMint.Metadata.FunctionName != "mint" {
+		t.Fatalf("Mint: expected FunctionName to be 'mint', got %s",
+			txMint.Metadata.FunctionName)
+	}
+
+	t.Log("checking non-existent hash...")
+
+	nonExistentHash := "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+
+	_, err = framework.Call[api_storage.TransactionListItem](
+		ts.API,
+		"explorer_getTransactionByHash",
+		nonExistentHash,
+	)
+	if err != nil {
+		t.Errorf("unexpected error for non-existent hash: %v", err)
+	}
+
+	t.Log("checking empty/invalid params...")
+
+	_, err = framework.Call[api_storage.TransactionListItem](
+		ts.API,
+		"explorer_getTransactionByHash",
+		"",
+	)
+	if err == nil {
+		t.Fatalf("expected error for empty hash param, got nil")
+	}
+}
+
 func newTestBlock(blockNumber uint64) *types.Block {
 	hash := fmt.Sprintf("0x%064x", blockNumber)
 
@@ -1831,7 +2164,6 @@ func newTestBlock(blockNumber uint64) *types.Block {
 		MixHash:          "0x" + strings.Repeat("0", 64),
 	}
 }
-
 func newTestTransaction(blockNumber uint64, index int) *types.Transaction {
 	blockHash := fmt.Sprintf("0x%064x", blockNumber)
 	txHash := fmt.Sprintf("0x%063x%01x", blockNumber, index)

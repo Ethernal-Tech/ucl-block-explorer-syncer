@@ -672,15 +672,22 @@ func (d *DB) InsertTransaction(t *testing.T, tx *types.Transaction) {
 		maxPriorityFeePerGas = &s
 	}
 
+	var dataMethod *string
+
+	if len(tx.Input) >= 10 {
+		s := tx.Input[:10]
+		dataMethod = &s
+	}
+
 	_, err := d.conn.Exec(`
 		INSERT INTO chain.transactions (
 			hash, block_hash, block_number, from_address, to_address,
 			value, nonce, gas_limit, gas_price, gas_fee_cap, gas_tip_cap,
-			data, type, chain_id, status, block_timestamp
+			data, data_method, type, chain_id, status, block_timestamp
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16
+			$12, $13, $14, $15, $16, $17
 		)`,
 		tx.Hash,
 		tx.BlockHash,
@@ -694,6 +701,7 @@ func (d *DB) InsertTransaction(t *testing.T, tx *types.Transaction) {
 		maxFeePerGas,
 		maxPriorityFeePerGas,
 		tx.Input,
+		dataMethod,
 		uint64(tx.Type),
 		func() *string {
 			if tx.ChainID == nil {
