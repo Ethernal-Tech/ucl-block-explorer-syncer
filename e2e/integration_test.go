@@ -2309,9 +2309,11 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 				}
 
 				var hasActivity bool
+
 				for _, item := range resp.Data.List {
 					if item.Count > 0 {
 						hasActivity = true
+
 						break
 					}
 				}
@@ -2635,6 +2637,7 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 		b.GasUsed = hexutil.Uint64(gasUsed)
 		b.GasLimit = hexutil.Uint64(gasLimit)
 		b.Timestamp = hexutil.Uint64(uint64(ts.Unix()))
+
 		return b
 	}
 
@@ -2731,11 +2734,13 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 
 				// find validator1 in hour -1
 				h1ago := currentHour.Add(-1 * time.Hour).Format(time.RFC3339)
+
 				var v1h1 *api_storage.ValidatorUtilizationRow
 
 				for i, item := range resp.Data.List {
 					if item.ValidatorAddress == validator1 && item.BucketUtc == h1ago {
 						v1h1 = &resp.Data.List[i]
+
 						break
 					}
 				}
