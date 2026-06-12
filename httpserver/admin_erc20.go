@@ -1,15 +1,21 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
 	commonHelper "github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/rpc"
+
+	"github.com/ethereum/go-ethereum/common"
 )
 
 const maxAdminJSONBody = 1 << 16
@@ -89,6 +95,42 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 
 		return
 	}
+	// Check if already in watchlist — skip contract verification for updates
+	var alreadyExists bool
+
+	_ = s.cfg.DB.QueryRowContext(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM chain.erc20_watchlist WHERE address = $1)`,
+		tokenAddr).Scan(&alreadyExists)
+
+	if !alreadyExists {
+		// Check entity_hour_participation — if found, it's an EOA
+		var isEOA bool
+
+		_ = s.cfg.DB.QueryRowContext(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM chain.entity_hour_participation WHERE address = $1 LIMIT 1)`,
+			tokenAddr).Scan(&isEOA)
+		if isEOA {
+			writeError(w, http.StatusBadRequest, "address is an EOA, not a contract")
+
+			return
+		}
+
+		// Verify with eth_getCode
+		if s.cfg.NodeRPC != "" {
+			isContract, err := isContract(s.cfg.NodeRPC, tokenAddr)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to verify contract address")
+
+				return
+			}
+
+			if !isContract {
+				writeError(w, http.StatusBadRequest, "address is not an ERC-20 contract")
+
+				return
+			}
+		}
+	}
 
 	symbol := strings.TrimSpace(req.Symbol)
 	if len(symbol) > 32 {
@@ -140,4 +182,46 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 		"ok":      true,
 		"address": tokenAddr,
 	})
+}
+
+func isContract(rpcURL, addr string) (bool, error) {
+	client, err := rpc.Dial(rpcURL)
+	if err != nil {
+		return false, err
+	}
+
+	var code hexutil.Bytes
+
+	if err := client.CallContext(context.TODO(),
+		&code,
+		"eth_getCode",
+		addr,
+		"latest"); err != nil {
+		return false, fmt.Errorf("failed to get code: %w", err)
+	}
+
+	if len(code) == 0 {
+		return false, nil // EOA, no code
+	}
+
+	return isERC20Bytecode(common.Bytes2Hex(code)), nil
+}
+
+func isERC20Bytecode(bytecode string) bool {
+	// Standard ERC-20 function selectors
+	selectors := []string{
+		"6318160ddd14", // totalSupply()
+		"6370a0823114", // balanceOf(address)
+		"63a9059cbb14", // transfer(address,uint256)
+		"63dd62ed3e14", // allowance(address,address)
+		"63095ea7b314", // approve(address,uint256)
+		"6323b872dd14", // transferFrom(address,address,uint256)
+	}
+	for _, sel := range selectors {
+		if !strings.Contains(bytecode, sel) {
+			return false
+		}
+	}
+
+	return true
 }

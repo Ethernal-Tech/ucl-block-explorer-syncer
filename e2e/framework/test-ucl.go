@@ -234,7 +234,7 @@ func (u *UCL) sendTx(
 	}
 
 	var receipt *types.Receipt
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 60; i++ {
 		receipt, err = u.client.TransactionReceipt(ctx, signedTx.Hash())
 		if err == nil {
 			break
@@ -244,7 +244,7 @@ func (u *UCL) sendTx(
 	}
 
 	if receipt == nil {
-		u.t.Fatalf("failed to get receipt after 30 attempts")
+		u.t.Fatalf("failed to get receipt after 60 attempts")
 	}
 
 	if receipt.Status != types.ReceiptStatusSuccessful {

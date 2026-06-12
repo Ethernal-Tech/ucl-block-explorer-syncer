@@ -13,7 +13,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(syncerCommand, apiCommand)
+	rootCmd.AddCommand(syncerCommand, apiCommand, genConfigCommand)
 }
 
 // Execute runs the root command (sync or api subcommand).

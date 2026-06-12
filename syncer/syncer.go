@@ -140,6 +140,14 @@ type Erc20Backend interface {
 		volumes map[string]*big.Int) error
 }
 
+// ESGAggregationBackend defines the interface that must be implemented by any backend used
+// for ESG calculation and aggregation. It is required when the syncer is configured with the
+// [WithESGAggregationStats].
+type ESGAggregationBackend interface {
+	// Process executes the ESG aggregation logic.
+	Process(context.Context, func(string, ...any)) (done bool, wait bool, err error)
+}
+
 // EoaActivityBackend defines the interface that must be implemented by any backend used for EOA
 // activity tracking. It is required when the syncer is configured with the [WithEoaActivityStats]
 // option. The syncer sequentially retrieves transaction participants (sender and receiver) for
@@ -274,6 +282,14 @@ type Syncer struct {
 	// By default, 0.
 	eoaActivityStartBlock uint64
 
+	// esgAggregationBackend is the backend required for processing ESG aggregation. If nil, processing
+	// is disabled. For details, see the [ESGAggregationBackend] interface documentation.
+	esgAggregationBackend ESGAggregationBackend
+
+	// esgAggregationPollInterval specifies how often the syncer attempts to execute ESG aggregation
+	// logic. By default, once per day.
+	esgAggregationPollInterval uint64
+
 	// Internal fields used by the syncer:
 
 	// m, s, and l form an internal block queue used to pass blocks from the block worker, via
@@ -300,6 +316,9 @@ type Syncer struct {
 
 	// txpwHandle holds the handle for the transaction pool worker managed by the syncer.
 	txpwHandle *txPoolWorkerHandle
+
+	// esgAggregationWorkerHandle holds the handle for the ESG aggregation worker managed by the syncer.
+	esgAggregationWorkerHandle *esgAggregationWorkerHandle
 
 	// shutDownCh is closed to signal all workers (that is, their controller goroutines) to shut
 	// down gracefully.
@@ -329,6 +348,8 @@ type Syncer struct {
 //  15. WithEoaActivityStats (default: disabled)
 //  16. WithEoaActivityProcessInterval (default: 2000 milliseconds)
 //  17. WithEoaActivityStartBlock (default: 0)
+//  18. WithESGAggregationStats (default: disabled)
+//  19. WithESGAggregationProcessInterval (default: once per day at midnight UTC)
 func NewSyncer(
 	rpcURL string,
 	storage StorageHandler,
@@ -352,6 +373,7 @@ func NewSyncer(
 		erc20WatchlistCheckInterval: 2000,
 		erc20ProcessInterval:        2000,
 		eoaActivityProcessInterval:  2000,
+		esgAggregationPollInterval:  uint64((24 * time.Hour).Milliseconds()),
 	}
 
 	for _, o := range opts {
@@ -436,6 +458,16 @@ func NewSyncer(
 		syncer.eoaawHandle = eoaawh
 	}
 
+	// ESG aggregation worker handle construction.
+	if syncer.esgAggregationBackend != nil {
+		esgawh, err := syncer.createESGAggregationWorkerHandle(context.Background())
+		if err != nil {
+			return nil, err
+		}
+
+		syncer.esgAggregationWorkerHandle = esgawh
+	}
+
 	// [SCHEDULED FOR REMOVAL]
 	// Transaction pool worker handle construction.
 	if syncer.syncTxPool {
@@ -492,6 +524,12 @@ func (s *Syncer) Start() error {
 		}
 	}
 
+	if s.esgAggregationWorkerHandle != nil {
+		if err := s.esgAggregationWorkerHandle.worker.Start(); err != nil {
+			return fmt.Errorf("cannot start ESG aggregation worker: %w", err)
+		}
+	}
+
 	if s.syncTxPool {
 		if err := s.txpwHandle.txpw.Start(); err != nil {
 			return fmt.Errorf("cannot start block worker: %w", err)
@@ -511,6 +549,10 @@ func (s *Syncer) Start() error {
 	}
 
 	if s.eoaActivityBackend != nil {
+		wg.Add(1)
+	}
+
+	if s.esgAggregationBackend != nil {
 		wg.Add(1)
 	}
 
@@ -930,6 +972,37 @@ func (s *Syncer) Start() error {
 				case err := <-s.eoaawHandle.errCh:
 					s.log("EOA activity worker encountered a fatal error: %s", err.Err.Error())
 				case <-s.eoaawHandle.doneCh:
+				}
+			}
+		}()
+	}
+
+	// ESG aggregation worker controller goroutine - responsible for managing the ESG aggregation
+	// worker lifecycle. It has two tasks/responsibilities:
+	//
+	// 1. Listens for fatal errors from the ESG aggregation worker. Since a value sent to errCh
+	//    indicates the ESG aggregation worker has already shut down, it logs the error and signals
+	//    the other worker controllers to shut down as well.
+	//
+	// 2. Listens for a shutdown signal from the other worker controllers. Upon receiving it,
+	//    it signals the eoa activity worker to stop by closing ctrlCh, and waits for it to
+	//    shut down gracefully via doneCh.
+	if s.esgAggregationBackend != nil {
+		go func() {
+			defer wg.Done()
+
+			select {
+			case err := <-s.esgAggregationWorkerHandle.errCh:
+				s.log("ESG aggregation worker encountered a fatal error: %s", err.Err.Error())
+
+				s.shutDownHandles()
+			case <-s.shutDownCh:
+				close(s.esgAggregationWorkerHandle.ctrlCh)
+
+				select {
+				case err := <-s.esgAggregationWorkerHandle.errCh:
+					s.log("ESG aggregation worker encountered a fatal error: %s", err.Err.Error())
+				case <-s.esgAggregationWorkerHandle.doneCh:
 				}
 			}
 		}()
@@ -1471,6 +1544,59 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 
 	return &eoaActivityWorkerHandle{
 		eoaaw,
+		ctrlCh,
+		doneCh,
+		errCh,
+	}, nil
+}
+
+type esgAggregationWorkerHandle struct {
+	worker *abstractworker.AbstractWorker
+	ctrlCh chan struct{}
+	doneCh chan string
+	errCh  chan struct {
+		Err error
+		Id  string
+	}
+}
+
+func (s *Syncer) createESGAggregationWorkerHandle(
+	ctx context.Context,
+) (*esgAggregationWorkerHandle, error) {
+	ctrlCh := make(chan struct{}, 1)
+	doneCh := make(chan string, 1)
+	errCh := make(chan struct {
+		Err error
+		Id  string
+	}, 1)
+
+	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
+		return s.esgAggregationBackend.Process(ctx, log)
+	}
+
+	opts := []abstractworker.AbstractWorkerOption{
+		abstractworker.WithID("0"),
+		abstractworker.WithWorkerType("esg aggregation"),
+		abstractworker.WithProcessInterval(s.esgAggregationPollInterval),
+	}
+
+	if s.logger != nil {
+		opts = append(opts, abstractworker.WithLogger(s.logger))
+	}
+
+	esgaw, err := abstractworker.NewAbstractWorker(
+		processFn,
+		ctrlCh,
+		doneCh,
+		errCh,
+		opts...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create esg aggregation worker: %w", err)
+	}
+
+	return &esgAggregationWorkerHandle{
+		esgaw,
 		ctrlCh,
 		doneCh,
 		errCh,

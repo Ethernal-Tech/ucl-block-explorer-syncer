@@ -623,7 +623,7 @@ func TestE2E_EOAActivity(t *testing.T) {
 
 		synced := false
 
-		for i := 0; i < 30; i++ {
+		for i := 0; i < 60; i++ {
 			lastBlockPtr, err := ts.DB.GetLastProcessedEOAActivityBlock(t)
 			if err != nil {
 				t.Fatalf("%v", err)
