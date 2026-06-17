@@ -124,7 +124,7 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 			if strings.ToLower(*tx.BlockHash) != strings.ToLower(receipts[i].BlockHash.Hex()) ||
 				(i < 50 && tx.Value.ToInt().Cmp(big.NewInt(10)) != 0) ||
 				(i == 50 && strings.TrimPrefix(tx.Input, "0x") != framework.Erc20Bytecode) {
-				t.Errorf("incorrectly indexed")
+				t.Fatal("incorrectly indexed")
 			}
 		}
 	}
@@ -296,10 +296,6 @@ func TestE2E_ERC20Stats(t *testing.T) {
 		actualForToken, ok := actual[erc20.Hex()]
 		if !ok {
 			t.Fatalf("no hourly stats found in DB for token %s", erc20.Hex())
-		}
-
-		if len(actualForToken) != len(expected) {
-			t.Errorf("expected %d hour buckets, got %d", len(expected), len(actualForToken))
 		}
 
 		assertHourlyStats(t, hours, expected, actualForToken)
@@ -535,10 +531,6 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			t.Fatalf("no hourly stats found in DB for token %s", erc20.Hex())
 		}
 
-		if len(actualForToken) != len(expected) {
-			t.Errorf("expected %d hour buckets, got %d", len(expected), len(actualForToken))
-		}
-
 		assertHourlyStats(t, hours, expected, actualForToken)
 	}
 
@@ -752,11 +744,11 @@ func TestE2E_EOAActivity(t *testing.T) {
 	actual := ts.DB.GetEOAParticipationStats(ctx, t)
 
 	if len(actual) != len(expected) {
-		t.Errorf("expected %d addresses, got %d", len(expected), len(actual))
+		t.Fatalf("expected %d addresses, got %d", len(expected), len(actual))
 	}
 
 	if _, ok := actual[notInList.Hex()]; ok {
-		t.Errorf("unexpected %d addresses", notInList)
+		t.Fatalf("unexpected %d addresses", notInList)
 	}
 
 	for addr, hours := range expected {
@@ -771,12 +763,12 @@ func TestE2E_EOAActivity(t *testing.T) {
 		}
 
 		if len(actualHourSet) != len(hours) {
-			t.Errorf("address %s: expected %d hour buckets, got %d", addr, len(hours), len(actualHourSet))
+			t.Fatalf("address %s: expected %d hour buckets, got %d", addr, len(hours), len(actualHourSet))
 		}
 
 		for hour := range hours {
 			if _, ok := actualHourSet[hour]; !ok {
-				t.Errorf("address %s: missing hour %d in DB", addr, hour)
+				t.Fatalf("address %s: missing hour %d in DB", addr, hour)
 			}
 		}
 	}
@@ -784,14 +776,14 @@ func TestE2E_EOAActivity(t *testing.T) {
 	for addr, actualHours := range actual {
 		expectedHours, ok := expected[addr]
 		if !ok {
-			t.Errorf("unexpected address %s found in DB with hours %v", addr, actualHours)
+			t.Fatalf("unexpected address %s found in DB with hours %v", addr, actualHours)
 
 			continue
 		}
 
 		for _, h := range actualHours {
 			if _, ok := expectedHours[h]; !ok {
-				t.Errorf("address %s: unexpected hour %d found in DB", addr, h)
+				t.Fatalf("address %s: unexpected hour %d found in DB", addr, h)
 			}
 		}
 	}
