@@ -2986,3 +2986,123 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 		})
 	}
 }
+
+func TestIntegration_CaseSensitiveAddressQuery(t *testing.T) {
+	ts := framework.NewTestCluster(t,
+		framework.WithAPI(),
+		framework.WithAPILogging(),
+	)
+	defer ts.Stop()
+
+	ts.API.Start()
+
+	now := time.Now().UTC()
+	addr := common.HexToAddress("0xabc1234567890000000000000000000000000001").Hex()
+
+	blockHash := "0x" + strings.Repeat("01", 32)
+	ts.DB.InsertBlock(t, &types.Block{
+		Hash:       blockHash,
+		Number:     1,
+		ParentHash: "0x" + strings.Repeat("00", 32),
+		Miner:      addr,
+		Timestamp:  hexutil.Uint64(now.Unix()),
+	})
+
+	txHash := "0x" + strings.Repeat("a1", 32)
+	ts.DB.InsertTransaction(t, &types.Transaction{
+		Hash:      txHash,
+		BlockHash: &blockHash,
+		BlockNumber: func() *hexutil.Uint64 {
+			n := hexutil.Uint64(1)
+
+			return &n
+		}(),
+		From: addr,
+		To:   &addr,
+		BlockTimestamp: func() *hexutil.Uint64 {
+			ts := hexutil.Uint64(now.Unix())
+
+			return &ts
+		}(),
+	})
+
+	tokenAddr := common.HexToAddress("0xdef9876543210000000000000000000000000099").Hex()
+	ts.DB.AddERC20ToWatchlist(t, tokenAddr, "TTK", 18)
+	ts.DB.InsertTestERC20HourlyStat(t, tokenAddr, now.Truncate(time.Hour),
+		5, "1000", 2, "500", 1, "200", "300")
+
+	today := now.Format("2006-01-02")
+	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
+
+	caseVariants := []struct {
+		name string
+		addr string
+	}{
+		{"lowercase", strings.ToLower(addr)},
+		{"uppercase", strings.ToUpper(addr)},
+		{"EIP-55", addr},
+	}
+
+	for _, cv := range caseVariants {
+		t.Run("tx from "+cv.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.TransactionListResponse](ts.API, "explorer_getTransactionList",
+				&api_storage.TransactionListRequest{
+					From:     cv.addr,
+					Page:     1,
+					PageSize: 50,
+				})
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
+
+			if len(resp.Data.List) == 0 {
+				t.Fatal("returned empty")
+			}
+		})
+
+		t.Run("tx to "+cv.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.TransactionListResponse](ts.API, "explorer_getTransactionList",
+				&api_storage.TransactionListRequest{
+					To:       cv.addr,
+					Page:     1,
+					PageSize: 50,
+				})
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
+
+			if len(resp.Data.List) == 0 {
+				t.Fatal("returned empty")
+			}
+		})
+	}
+
+	tokenVariants := []struct {
+		name string
+		addr string
+	}{
+		{"lowercase", strings.ToLower(tokenAddr)},
+		{"uppercase", strings.ToUpper(tokenAddr)},
+		{"EIP-55", tokenAddr},
+	}
+
+	for _, cv := range tokenVariants {
+		t.Run("erc20 stats "+cv.name, func(t *testing.T) {
+			resp, err := framework.Call[api_storage.Erc20DailyStatsResponse](ts.API, "explorer_getErc20DailyStats",
+				&api_storage.Erc20DailyStatsRequest{
+					TokenAddress: cv.addr,
+					FromDay:      today,
+					ToDay:        tomorrow,
+					Page:         1,
+					PageSize:     50,
+				})
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
+
+			if len(resp.Data.List) == 0 {
+				t.Fatal("returned empty")
+			}
+		})
+	}
+}
