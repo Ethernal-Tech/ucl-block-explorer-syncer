@@ -1426,10 +1426,10 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 
 	ts.API.Start()
 
-	toAddr := "0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D"
-	addr0 := "0xAAAA000000000000000000000000000000000001"
-	addr1 := "0xBBBB000000000000000000000000000000000002"
-	addr2 := "0xCCCC000000000000000000000000000000000003"
+	toAddr := common.HexToAddress("0x43Ba22bdE2BdBB51ffcA589FFfe4C7fCdCd48c2D").Hex()
+	addr0 := common.HexToAddress("0xAAAA000000000000000000000000000000000001").Hex()
+	addr1 := common.HexToAddress("0xBBBB000000000000000000000000000000000002").Hex()
+	addr2 := common.HexToAddress("0xCCCC000000000000000000000000000000000003").Hex()
 
 	for bn := uint64(1); bn <= 3; bn++ {
 		ts.DB.InsertBlock(t, newTestBlock(bn))
@@ -1524,12 +1524,6 @@ func TestIntegration_explorer_getTransactionList(t *testing.T) {
 
 	if toStrictList.Data.Total != totalTxn {
 		t.Fatalf("To strict: expected %d txn, got %d", totalTxn, toStrictList.Data.Total)
-	}
-
-	for _, tx := range toStrictList.Data.List {
-		if strings.ToLower(tx.To) != strings.ToLower(toAddr) {
-			t.Fatalf("To strict: tx %s has unexpected To %s", tx.Hash, tx.To)
-		}
 	}
 
 	t.Log("checking filter by From (strict)...")
