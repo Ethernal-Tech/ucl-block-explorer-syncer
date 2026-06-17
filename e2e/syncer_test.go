@@ -86,7 +86,7 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 
 		for _, receipt := range receipts {
 			if receipt.Status == 0 {
-				t.Logf("tx %v unsuccessfully executed", receipt.TxHash)
+				t.Fatalf("tx %v unsuccessfully executed", receipt.TxHash)
 			}
 		}
 
@@ -99,7 +99,7 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 		}
 
 		if balance.Uint64() != 500 {
-			t.Logf("incorrect balance")
+			t.Fatal("incorrect balance")
 		}
 
 		var maxBlockNumber uint64 = 0
@@ -1077,8 +1077,11 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	t.Log("initial transactions sent")
 
-	testCluster.DB.WaitForBlock(t,
-		transferReceipt.BlockNumber.Uint64(), 30*time.Second)
+	if err := testCluster.DB.WaitForBlock(t,
+		transferReceipt.BlockNumber.Uint64(),
+		30*time.Second); err != nil {
+		t.Fatalf("%s", err.Error())
+	}
 
 	// verify initial EOA activity
 	statsBefore := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
@@ -1110,9 +1113,11 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	testCluster.RestartSyncer(testCluster.UCL.NodeRpcUrl(1))
 	t.Log("syncer restarted on node 1")
 
-	testCluster.DB.WaitForBlock(t,
+	if err := testCluster.DB.WaitForBlock(t,
 		secondTransferReceipt.BlockNumber.Uint64(),
-		30*time.Second)
+		30*time.Second); err != nil {
+		t.Fatalf("%s", err.Error())
+	}
 
 	// verify downtime EOA activity is indexed
 	statsAfterFailover := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
@@ -1160,8 +1165,11 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	t.Log("post-failover contract interactions done")
 
-	testCluster.DB.WaitForBlock(t,
-		erc20TransferReceipt.BlockNumber.Uint64(), 30*time.Second)
+	if err := testCluster.DB.WaitForBlock(t,
+		erc20TransferReceipt.BlockNumber.Uint64(),
+		30*time.Second); err != nil {
+		t.Fatalf("%s", err.Error())
+	}
 
 	// verify post-failover EOA activity
 	statsFinal := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
