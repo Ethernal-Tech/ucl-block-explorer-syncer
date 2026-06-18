@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -100,5 +99,5 @@ func recoverIBFTProposer(blockHashHex, extraDataHex string) (string, error) {
 	// the last 20 bytes of keccak256(X||Y).
 	addr := common.BytesToAddress(crypto.Keccak256(pub[1:])[12:])
 
-	return strings.ToLower(addr.Hex()), nil
+	return addr.Hex(), nil
 }

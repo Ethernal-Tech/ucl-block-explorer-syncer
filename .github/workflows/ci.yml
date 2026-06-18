@@ -20,7 +20,11 @@ on: # yamllint disable-line rule:truthy
       unit_test:
         description: Unit Tests
         type: boolean
-        default: true      
+        default: true
+      e2e_test:
+        description: E2E Tests
+        type: boolean
+        default: false
 
   workflow_call:
     inputs:
@@ -28,6 +32,10 @@ on: # yamllint disable-line rule:truthy
         description: Unit Tests
         type: boolean
         required: true
+      e2e_test:
+        description: E2E Tests
+        type: boolean
+        required: false
 
     outputs:
       build:
@@ -66,6 +74,16 @@ jobs:
     needs: build
     if: |
       inputs.unit_test ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'schedule'
+
+  e2e_test:
+    name: E2E Tests
+    uses: ./.github/workflows/e2e.yml
+    needs: build
+    if: |
+      inputs.e2e_test ||
       github.event_name == 'pull_request' ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'schedule'

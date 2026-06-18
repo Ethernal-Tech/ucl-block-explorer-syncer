@@ -80,8 +80,8 @@ CREATE TABLE IF NOT EXISTS chain.metadata (
 
 CREATE TABLE IF NOT EXISTS chain.erc20_watchlist (
     address     VARCHAR(42) PRIMARY KEY,
-    symbol      VARCHAR(32),
-    decimals    SMALLINT,
+    symbol      VARCHAR(32) NOT NULL,
+    decimals    SMALLINT NOT NULL,
     enabled     BOOLEAN NOT NULL DEFAULT TRUE,
     is_private     BOOLEAN NOT NULL DEFAULT FALSE,
     next_block BIGINT NOT NULL DEFAULT 1,

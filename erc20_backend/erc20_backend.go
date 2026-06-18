@@ -172,7 +172,7 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 			$3, $4,
 			$5, $6,
 			$7, $8,
-			GREATEST((SELECT val FROM prev) + ($6::numeric - $8::numeric) / (10::numeric ^ $9), 0)
+			GREATEST((SELECT val FROM prev) + ($6::numeric - $8::numeric), 0)
 		)
 		ON CONFLICT (token_address, hour_utc) DO UPDATE SET
 			transfer_count = chain.erc20_hourly_stats.transfer_count + EXCLUDED.transfer_count,
@@ -184,8 +184,7 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 			cumulative_circulation = GREATEST(
 				(SELECT val FROM prev)
 				+ (chain.erc20_hourly_stats.mint_volume_raw + EXCLUDED.mint_volume_raw
-				   - chain.erc20_hourly_stats.burn_volume_raw - EXCLUDED.burn_volume_raw)::numeric
-				  / (10::numeric ^ $9),
+				- chain.erc20_hourly_stats.burn_volume_raw - EXCLUDED.burn_volume_raw)::numeric,
 				0
 			),
 			updated_at = CURRENT_TIMESTAMP
@@ -195,7 +194,6 @@ func (b *PgErc20Backend) ProcessHourlyStat(
 		counts["transfer"], volumes["transfer"].String(),
 		counts["mint"], volumes["mint"].String(),
 		counts["burn"], volumes["burn"].String(),
-		token.Decimals,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert hourly stat for token %s: %w", token.Address, err)

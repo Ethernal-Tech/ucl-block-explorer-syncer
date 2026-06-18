@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/api_storage"
+	commonHelper "github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -56,13 +57,13 @@ func (s *Server) handleAdminValidators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalized := strings.ToLower(common.HexToAddress(addr).Hex())
+	validatorAddr := common.HexToAddress(addr).Hex()
 
 	switch r.Method {
 	case http.MethodPut, http.MethodPost:
-		s.handleUpsertValidator(w, r, normalized)
+		s.handleUpsertValidator(w, r, validatorAddr)
 	case http.MethodDelete:
-		s.handleDeleteValidator(w, normalized)
+		s.handleDeleteValidator(w, validatorAddr)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, methodNotAllowed)
 	}
@@ -83,8 +84,15 @@ func (s *Server) handleUpsertValidator(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
+	validatorAddr, err := commonHelper.NormalizeAddress(address)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
 	err = api_storage.UpsertValidatorMetadata(api_storage.ValidatorMetadata{
-		Address:     address,
+		Address:     validatorAddr,
 		Name:        strings.TrimSpace(req.Name),
 		Institution: strings.TrimSpace(req.Institution),
 		Region:      strings.TrimSpace(req.Region),

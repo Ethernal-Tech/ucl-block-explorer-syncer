@@ -90,7 +90,7 @@ func logHourlyStatsContext(t *testing.T, db *sql.DB) {
 		       s.mint_volume_raw::text, s.burn_volume_raw::text,
 		       s.cumulative_circulation::text
 		FROM chain.erc20_hourly_stats s
-		INNER JOIN chain.erc20_watchlist w ON lower(w.address) = lower(s.token_address)
+		INNER JOIN chain.erc20_watchlist w ON w.address = s.token_address
 		WHERE w.enabled = true AND w.decimals IS NOT NULL
 		ORDER BY s.hour_utc ASC
 		LIMIT 5

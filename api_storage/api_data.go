@@ -230,9 +230,9 @@ type Erc20CirculationCumulativeResponse struct {
 // Erc20CirculationCumulativeData is a paginated ascending list of UTC days with cumulative totals.
 type Erc20CirculationCumulativeData struct {
 	List     []Erc20CirculationCumulativeRow `json:"list"`
-	Total    int64                             `json:"total"`
-	Page     int                               `json:"page"`
-	PageSize int                               `json:"pageSize"`
+	Total    int64                           `json:"total"`
+	Page     int                             `json:"page"`
+	PageSize int                             `json:"pageSize"`
 }
 
 // Erc20CirculationCumulativeRow is end-of-bucket total in circulation (iterative clamp), decimal string.

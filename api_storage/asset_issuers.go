@@ -192,7 +192,7 @@ func GetAssetIssuerList() (*AssetIssuerListResponse, error) {
 
 func linkTokens(tx *sql.Tx, issuerID string, assets []string) error {
 	for _, addr := range assets {
-		addr = strings.ToLower(strings.TrimSpace(addr))
+		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			continue
 		}

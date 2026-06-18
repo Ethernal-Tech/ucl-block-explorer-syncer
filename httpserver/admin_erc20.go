@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
+	commonHelper "github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 
@@ -87,37 +89,26 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	addr := strings.TrimSpace(req.Address)
-	if !common.IsHexAddress(addr) {
-		writeError(w, http.StatusBadRequest, "invalid address")
+	tokenAddr, err := commonHelper.NormalizeAddress(req.Address)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 
 		return
 	}
-
-	// EIP-55 checksum validation
-	checksummed := common.HexToAddress(addr).Hex()
-	if addr != strings.ToLower(addr) && addr != checksummed {
-		writeError(w, http.StatusBadRequest, "invalid EIP-55 checksum")
-
-		return
-	}
-
-	normalized := strings.ToLower(checksummed)
-
 	// Check if already in watchlist — skip contract verification for updates
 	var alreadyExists bool
 
 	_ = s.cfg.DB.QueryRowContext(r.Context(),
-		`SELECT EXISTS(SELECT 1 FROM chain.erc20_watchlist WHERE lower(address) = $1)`,
-		normalized).Scan(&alreadyExists)
+		`SELECT EXISTS(SELECT 1 FROM chain.erc20_watchlist WHERE address = $1)`,
+		tokenAddr).Scan(&alreadyExists)
 
 	if !alreadyExists {
 		// Check entity_hour_participation — if found, it's an EOA
 		var isEOA bool
 
 		_ = s.cfg.DB.QueryRowContext(r.Context(),
-			`SELECT EXISTS(SELECT 1 FROM chain.entity_hour_participation WHERE lower(address) = $1 LIMIT 1)`,
-			normalized).Scan(&isEOA)
+			`SELECT EXISTS(SELECT 1 FROM chain.entity_hour_participation WHERE address = $1 LIMIT 1)`,
+			tokenAddr).Scan(&isEOA)
 		if isEOA {
 			writeError(w, http.StatusBadRequest, "address is an EOA, not a contract")
 
@@ -126,7 +117,7 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 
 		// Verify with eth_getCode
 		if s.cfg.NodeRPC != "" {
-			isContract, err := isContract(s.cfg.NodeRPC, normalized)
+			isContract, err := isContract(s.cfg.NodeRPC, tokenAddr)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to verify contract address")
 
@@ -172,14 +163,16 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 
 	_, err = s.cfg.DB.ExecContext(r.Context(), `
 		INSERT INTO chain.erc20_watchlist (address, symbol, decimals, enabled, updated_at)
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+		VALUES ($1, COALESCE($2, ''), COALESCE($3, 0), $4, CURRENT_TIMESTAMP)
 		ON CONFLICT (address) DO UPDATE SET
-			symbol = COALESCE(EXCLUDED.symbol, chain.erc20_watchlist.symbol),
-			decimals = COALESCE(EXCLUDED.decimals, chain.erc20_watchlist.decimals),
+			symbol = COALESCE(NULLIF(EXCLUDED.symbol, ''), chain.erc20_watchlist.symbol),
+			decimals = COALESCE(NULLIF(EXCLUDED.decimals, 0), chain.erc20_watchlist.decimals),
 			enabled = EXCLUDED.enabled,
 			updated_at = CURRENT_TIMESTAMP
-	`, normalized, sym, dec, enabled)
+`, tokenAddr, sym, dec, enabled)
 	if err != nil {
+		log.Printf("admin erc20 watchlist db error: %v", err)
+
 		writeError(w, http.StatusInternalServerError, dbError)
 
 		return
@@ -187,7 +180,7 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ok":      true,
-		"address": normalized,
+		"address": tokenAddr,
 	})
 }
 

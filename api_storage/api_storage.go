@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/common"
 )
 
 const (
@@ -435,20 +437,32 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
 	var dynamicConditions []string
 
 	if req.Hash != "" {
+		loweredHash := strings.ToLower(strings.TrimSpace(req.Hash))
+
 		dynamicConditions = append(dynamicConditions, fmt.Sprintf("t.hash = $%d", paramIndex))
-		queryParams = append(queryParams, req.Hash)
+		queryParams = append(queryParams, loweredHash)
 		paramIndex++
 	}
 
 	if req.From != "" {
+		normalized, err := common.NormalizeAddress(req.From)
+		if err != nil {
+			return &TransactionListResponse{Code: "400", Message: "invalid from address"}, nil
+		}
+
 		dynamicConditions = append(dynamicConditions, fmt.Sprintf("t.from_address = $%d", paramIndex))
-		queryParams = append(queryParams, req.From)
+		queryParams = append(queryParams, normalized)
 		paramIndex++
 	}
 
 	if req.To != "" {
+		normalized, err := common.NormalizeAddress(req.To)
+		if err != nil {
+			return &TransactionListResponse{Code: "400", Message: "invalid to address"}, nil
+		}
+
 		dynamicConditions = append(dynamicConditions, fmt.Sprintf("t.to_address = $%d", paramIndex))
-		queryParams = append(queryParams, req.To)
+		queryParams = append(queryParams, normalized)
 		paramIndex++
 	}
 
@@ -594,12 +608,16 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
 
 // GetTransactionByHash get single transaction by hash
 func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
+	hash = strings.TrimSpace(hash)
+
 	if hash == "" {
 		return &TransactionListResponse{
 			Code:    "400",
 			Message: "Hash parameter is required",
 		}, fmt.Errorf("hash parameter is required")
 	}
+
+	loweredHash := strings.ToLower(strings.TrimSpace(hash))
 
 	query := `
 		SELECT 
@@ -634,7 +652,7 @@ func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
 
 	var data string
 
-	err := conn.QueryRow(query, hash).Scan(
+	err := conn.QueryRow(query, loweredHash).Scan(
 		&item.Hash,
 		&blockNumber,
 		&item.From,
@@ -735,15 +753,22 @@ func GetErc20DailyStats(req Erc20DailyStatsRequest) (*Erc20DailyStatsResponse, e
 	}
 
 	trunc := dateTruncField(g)
-	token := strings.TrimSpace(req.TokenAddress)
 
 	where := "WHERE 1=1" //nolint:goconst
 	args := []interface{}{}
 
 	n := 1
 
-	if token != "" {
-		where += fmt.Sprintf(" AND lower(s.token_address) = lower($%d)", n)
+	if req.TokenAddress != "" {
+		token, err := common.NormalizeAddress(req.TokenAddress)
+		if err != nil {
+			return &Erc20DailyStatsResponse{
+				Code:    "400",
+				Message: err.Error(),
+			}, nil
+		}
+
+		where += fmt.Sprintf(" AND s.token_address = $%d", n)
 
 		args = append(args, token)
 
