@@ -42,13 +42,8 @@ type ValidatorUtilizationResponse struct {
 }
 
 func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtilizationResponse, error) {
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-
-	if req.PageSize <= 0 || req.PageSize > 500 {
-		req.PageSize = 50
-	}
+	req.Page = clampPage(req.Page)
+	req.PageSize = clampErc20PageSize(req.PageSize)
 
 	conn := getDB()
 	if conn == nil {
@@ -205,7 +200,7 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	}
 
 	total := int64(len(list))
-	offset := (req.Page - 1) * req.PageSize
+	offset := paginationOffset(req.Page, req.PageSize)
 
 	if offset >= len(list) {
 		return &ValidatorUtilizationResponse{
