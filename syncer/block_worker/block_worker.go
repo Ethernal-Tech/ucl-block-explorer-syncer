@@ -189,7 +189,7 @@ func (w *BlockWorker) Start() error {
 			break
 		}
 
-		block, err := parseRawBlock(raw)
+		block, err := ParseRawBlock(raw)
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse block %d: %w", number, err)
 		}
@@ -276,7 +276,9 @@ func (w *BlockWorker) Start() error {
 	return nil
 }
 
-func parseRawBlock(raw json.RawMessage) (*types.Block, error) {
+// ParseRawBlock decodes a raw JSON message into a structured [types.Block] object. If the input
+// is the JSON literal "null", it gracefully returns a nil block and no error.
+func ParseRawBlock(raw json.RawMessage) (*types.Block, error) {
 	// A null response means the block has not been mined yet - we are at the tip.
 	if string(raw) == "null" {
 		return nil, nil

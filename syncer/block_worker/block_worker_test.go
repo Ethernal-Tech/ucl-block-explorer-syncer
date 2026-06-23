@@ -1,4 +1,4 @@
-package blockworker
+package blockworker_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/stretchr/testify/assert"
@@ -72,15 +73,15 @@ func Test_Retry(t *testing.T) {
 				}
 			})
 
-		worker, err := NewBlockWorker(
+		worker, err := blockworker.NewBlockWorker(
 			mockClient,
 			func(block *types.Block) error { return nil },
 			ctrlCh,
 			doneCh,
 			errCh,
-			WithRetry(3, 200),
-			WithPollInterval(200),
-			WithLogger(helper.DefaultLogger{}),
+			blockworker.WithRetry(3, 200),
+			blockworker.WithPollInterval(200),
+			blockworker.WithLogger(helper.DefaultLogger{}),
 		)
 		assert.NoError(t, err)
 
@@ -120,14 +121,14 @@ func Test_Retry(t *testing.T) {
 				}
 			})
 
-		worker, err := NewBlockWorker(
+		worker, err := blockworker.NewBlockWorker(
 			mockClient,
 			func(block *types.Block) error { return nil },
 			ctrlCh,
 			doneCh,
 			errCh,
-			WithRetry(3, 200),
-			WithLogger(helper.DefaultLogger{}),
+			blockworker.WithRetry(3, 200),
+			blockworker.WithLogger(helper.DefaultLogger{}),
 		)
 		assert.NoError(t, err)
 
@@ -148,20 +149,20 @@ func Test_Retry(t *testing.T) {
 
 func Test_ParseBlock(t *testing.T) {
 	t.Run("Null input", func(t *testing.T) {
-		res, err := parseRawBlock(json.RawMessage(`null`))
+		res, err := blockworker.ParseRawBlock(json.RawMessage(`null`))
 		assert.NoError(t, err)
 		assert.Nil(t, res)
 	})
 
 	t.Run("Valid input", func(t *testing.T) {
 		input := json.RawMessage(`{"hash": "0x123", "number": "0x1"}`)
-		res, err := parseRawBlock(input)
+		res, err := blockworker.ParseRawBlock(input)
 		assert.NoError(t, err)
 		assert.NotNil(t, res)
 	})
 
 	t.Run("Invalid input", func(t *testing.T) {
-		res, err := parseRawBlock(json.RawMessage(`{ invalid json `))
+		res, err := blockworker.ParseRawBlock(json.RawMessage(`{ invalid json `))
 		assert.Error(t, err)
 		assert.Nil(t, res)
 	})
