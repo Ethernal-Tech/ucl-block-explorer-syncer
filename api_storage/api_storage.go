@@ -62,17 +62,12 @@ func validBlockNumberString(s string) (string, bool) {
 
 // GetBlockList returns blocks with per-block transaction counts (all rows in chain.transactions with a block number).
 func GetBlockList(req BlockListRequest) (*BlockListResponse, error) {
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-
-	if req.PageSize <= 0 || req.PageSize > 100 {
-		req.PageSize = 10
-	}
+	req.Page = clampPage(req.Page)
+	req.PageSize = clampBlockListPageSize(req.PageSize)
 
 	maxBlockNumber := normalizeMaxBlockNumber(req.MaxBlockNumber)
 
-	offset := (req.Page - 1) * req.PageSize
+	offset := paginationOffset(req.Page, req.PageSize)
 
 	var query string
 	if req.OnlyWithTxn {
@@ -416,15 +411,10 @@ func GetLineData(req LineDataRequest) (*LineDataResponse, error) {
 
 // GetTransactionList get transaction list
 func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, error) {
-	if req.Page <= 0 {
-		req.Page = 1
-	}
+	req.Page = clampPage(req.Page)
+	req.PageSize = clampTxListPageSize(req.PageSize)
 
-	if req.PageSize <= 0 || req.PageSize > 1000 {
-		req.PageSize = 100
-	}
-
-	offset := (req.Page - 1) * req.PageSize
+	offset := paginationOffset(req.Page, req.PageSize)
 
 	var whereConditions []string
 
@@ -711,13 +701,8 @@ func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
 
 // GetErc20DailyStats returns paginated ERC-20 aggregates from chain.erc20_hourly_stats (bucketed by granularity).
 func GetErc20DailyStats(req Erc20DailyStatsRequest) (*Erc20DailyStatsResponse, error) {
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-
-	if req.PageSize <= 0 || req.PageSize > 500 {
-		req.PageSize = 50
-	}
+	req.Page = clampPage(req.Page)
+	req.PageSize = clampErc20PageSize(req.PageSize)
 
 	conn := getDB()
 	if conn == nil {
@@ -908,13 +893,8 @@ func getEntityDailyStatsFromTable(
 		return nil, errors.New("invalid entity stats table")
 	}
 
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-
-	if req.PageSize <= 0 || req.PageSize > 500 {
-		req.PageSize = 50
-	}
+	req.Page = clampPage(req.Page)
+	req.PageSize = clampErc20PageSize(req.PageSize)
 
 	g := normalizeGranularity(req.Granularity)
 
@@ -1054,7 +1034,7 @@ func executeEntityStatsQuery(
 		}, err
 	}
 
-	off := (req.Page - 1) * req.PageSize
+	off := paginationOffset(req.Page, req.PageSize)
 	listArgs := append(append([]interface{}{}, args...), req.PageSize, off)
 
 	rows, err := conn.Query(listQuery, listArgs...)

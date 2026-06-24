@@ -22,13 +22,17 @@ type TxJob struct {
 	To uint64
 }
 
+type rpcClient interface {
+	BatchCallContext(ctx context.Context, b []rpc.BatchElem) error
+}
+
 // TxWorker is a long-lived worker that receives jobs through the [TxWorker.jobCh], processes the
 // assigned job (fetching transactions and/or their receipts for a given range within a block),
 // and signals completion by writing to [TxWorker.doneCh]. For details on work distribution, see
 // [CreateJobs] within helper package.
 type TxWorker struct {
 	// client is the EVM-based RPC client used to fetch transactions and their receipts.
-	client *rpc.Client
+	client rpcClient
 
 	// processTxsFn is a callback invoked once per job, with all transactions in the assigned
 	// range fully fetched and populated. Returning an error from this function causes the worker
@@ -90,7 +94,7 @@ type TxWorker struct {
 //  3. WithRetry (default: first failure is treated as fatal)
 //  4. WithBatchSize (default, 1)
 func NewTxWorker(
-	client *rpc.Client,
+	client rpcClient,
 	processTxsFn func([]*types.Transaction) error,
 	fetchTxDataFn func(hash string) bool,
 	doneCh chan<- uint64,

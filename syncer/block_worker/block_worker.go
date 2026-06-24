@@ -9,8 +9,15 @@ import (
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	"github.com/ethereum/go-ethereum/rpc"
 )
+
+type rpcClient interface {
+	CallContext(
+		ctx context.Context,
+		result interface{},
+		method string,
+		args ...interface{}) error
+}
 
 // BlockWorker is a long-lived worker that sequentially fetches and processes blocks from an
 // EVM-based node, starting from [BlockWorker.startBlock]. It signals completion by writing
@@ -18,7 +25,7 @@ import (
 // be paused and resumed via [BlockWorker.ctrlCh].
 type BlockWorker struct {
 	// client is the EVM-based RPC client used to fetch blocks.
-	client *rpc.Client
+	client rpcClient
 
 	// processBlockFn is a callback invoked for each fetched block. Returning an error from this
 	// function causes the worker to stop and report the error via [BlockWorker.errCh].
@@ -96,7 +103,7 @@ type BlockWorker struct {
 //  7. WithTipOnly (default: false)
 //  8. WithFullTransactions (default: false)
 func NewBlockWorker(
-	client *rpc.Client,
+	client rpcClient,
 	processBlockFn func(block *types.Block) error,
 	ctrlCh <-chan struct{},
 	doneCh chan<- struct{},
@@ -182,18 +189,12 @@ func (w *BlockWorker) Start() error {
 			break
 		}
 
-		// A null response means the block has not been mined yet - we are at the tip.
-		if string(raw) == "null" {
-			return nil, nil
+		block, err := ParseRawBlock(raw)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse block %d: %w", number, err)
 		}
 
-		var block types.Block
-
-		if err := json.Unmarshal(raw, &block); err != nil {
-			return nil, fmt.Errorf("cannot unmarshal the block %d: %w", number, err)
-		}
-
-		return &block, nil
+		return block, nil
 	}
 
 	go func() {
@@ -273,6 +274,22 @@ func (w *BlockWorker) Start() error {
 	}()
 
 	return nil
+}
+
+// ParseRawBlock decodes a raw JSON message into a structured [types.Block] object. If the input
+// is the JSON literal "null", it gracefully returns a nil block and no error.
+func ParseRawBlock(raw json.RawMessage) (*types.Block, error) {
+	// A null response means the block has not been mined yet - we are at the tip.
+	if string(raw) == "null" {
+		return nil, nil
+	}
+
+	var block types.Block
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return nil, err
+	}
+
+	return &block, nil
 }
 
 // shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [BlockWorker.errCh].

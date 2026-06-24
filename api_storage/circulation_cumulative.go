@@ -73,13 +73,8 @@ func GetErc20CirculationCumulativeStats(
 	req Erc20CirculationCumulativeRequest) (
 	*Erc20CirculationCumulativeResponse,
 	error) {
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-
-	if req.PageSize <= 0 || req.PageSize > 500 {
-		req.PageSize = 50
-	}
+	req.Page = clampPage(req.Page)
+	req.PageSize = clampErc20PageSize(req.PageSize)
 
 	conn := getDB()
 	if conn == nil {
@@ -162,7 +157,7 @@ func GetErc20CirculationCumulativeStats(
 		}, nil
 	}
 
-	offset := (req.Page - 1) * req.PageSize
+	offset := paginationOffset(req.Page, req.PageSize)
 	if offset >= len(merged) {
 		return &Erc20CirculationCumulativeResponse{
 			Code: "200",
