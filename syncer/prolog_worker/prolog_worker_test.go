@@ -51,6 +51,7 @@ func Test_LifecycleAndFiltering(t *testing.T) {
 		}
 
 		var capturedLogs []*types.ReceiptLog
+
 		processLogsCalled := false
 
 		worker, err := prologworker.NewPrologWorker(

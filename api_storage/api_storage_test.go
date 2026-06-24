@@ -31,6 +31,7 @@ func TestNormalizeMaxBlockNumber(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := normalizeMaxBlockNumber(tc.input)
 			if got != tc.want {
 				t.Fatalf("normalizeMaxBlockNumber(%q) = %q, want %q", tc.input, got, tc.want)
@@ -67,10 +68,12 @@ func TestValidBlockNumberString(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got, ok := validBlockNumberString(tc.input)
 			if ok != tc.want.ok {
 				t.Fatalf("validBlockNumberString(%q) ok = %v, want %v", tc.input, ok, tc.want.ok)
 			}
+
 			if ok && got != tc.want.val {
 				t.Fatalf("validBlockNumberString(%q) val = %q, want %q", tc.input, got, tc.want.val)
 			}
@@ -136,10 +139,13 @@ func TestErc20DayUtcLabel(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := erc20DayUtcLabel(tc.ts, tc.gran)
+
 			if tc.wantExact != "" && got != tc.wantExact {
 				t.Fatalf("erc20DayUtcLabel(%v, %q) = %q, want %q", tc.ts, tc.gran, got, tc.wantExact)
 			}
+
 			if tc.wantContain != "" && !strings.Contains(got, tc.wantContain) {
 				t.Fatalf("erc20DayUtcLabel(%v, %q) = %q, want it to contain %q", tc.ts, tc.gran, got, tc.wantContain)
 			}
@@ -154,6 +160,7 @@ func TestGetTransactionByHash_EmptyHash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty hash")
 	}
+
 	if resp.Code != "400" {
 		t.Fatalf("expected code 400, got %q", resp.Code)
 	}
@@ -166,6 +173,7 @@ func TestGetTransactionByHash_WhitespaceHash(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for whitespace-only hash")
 	}
+
 	if resp.Code != "400" {
 		t.Fatalf("expected code 400, got %q", resp.Code)
 	}
@@ -216,13 +224,16 @@ func TestGetTransactionList_AddressValidation(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			resp, err := GetTransactionList(tc.req)
 			if err != nil {
 				t.Fatalf("unexpected Go error: %v", err)
 			}
+
 			if resp.Code != tc.wantCode {
 				t.Fatalf("code = %q, want %q", resp.Code, tc.wantCode)
 			}
+
 			if !strings.Contains(resp.Message, tc.wantMsgFrag) {
 				t.Fatalf("message %q does not contain %q", resp.Message, tc.wantMsgFrag)
 			}
@@ -238,6 +249,7 @@ func TestGetTransactionList_BlockNumberSilentlySkipped(t *testing.T) {
 		bn := bn
 		t.Run(bn, func(t *testing.T) {
 			t.Parallel()
+
 			resp, _ := GetTransactionList(TransactionListRequest{BlockNumber: bn})
 			if resp.Code == "400" {
 				t.Fatalf("block number %q should not produce 400, got: %s", bn, resp.Message)
@@ -263,10 +275,12 @@ func TestGetBlockDetail_InvalidBlockNumber(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			resp, err := GetBlockDetail(BlockDetailRequest{BlockNumber: tc.input})
 			if err != nil {
 				t.Fatalf("unexpected Go error: %v", err)
 			}
+
 			if resp.Code != "400" {
 				t.Fatalf("code = %q, want 400", resp.Code)
 			}

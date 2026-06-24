@@ -138,11 +138,13 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 
 			for {
 				mut.RLock()
+
 				if counter > goal {
 					mut.RUnlock()
 
 					break
 				}
+
 				mut.RUnlock()
 
 				select {

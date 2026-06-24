@@ -30,6 +30,7 @@ func TestNormalizeGranularity(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := normalizeGranularity(tc.input)
 			if got != tc.want {
 				t.Fatalf("normalizeGranularity(%q) = %q, want %q", tc.input, got, tc.want)
@@ -57,6 +58,7 @@ func TestDateTruncField(t *testing.T) {
 		tc := tc
 		t.Run(tc.gran, func(t *testing.T) {
 			t.Parallel()
+
 			got := dateTruncField(tc.gran)
 			if got != tc.want {
 				t.Fatalf("dateTruncField(%q) = %q, want %q", tc.gran, got, tc.want)
@@ -91,6 +93,7 @@ func TestHoursInRange(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := hoursInRange(tc.from, tc.to)
 			if got != tc.want {
 				t.Fatalf("hoursInRange(%v, %v) = %d, want %d", tc.from, tc.to, got, tc.want)
@@ -159,6 +162,7 @@ func TestParseStatsTimeRange_UTCPair(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			from, to, err := parseStatsTimeRange("", "", tc.fromUtc, tc.toUtc)
 
 			onlyOne := (tc.fromUtc != "") != (tc.toUtc != "")
@@ -168,18 +172,22 @@ func TestParseStatsTimeRange_UTCPair(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil (from=%q to=%q)", tc.fromUtc, tc.toUtc)
 				}
+
 				if tc.wantErrIn != "" && !strings.Contains(err.Error(), tc.wantErrIn) {
 					t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErrIn)
 				}
+
 				return
 			}
 
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+
 			if !from.Equal(tc.wantFrom) {
 				t.Fatalf("from = %v, want %v", from, tc.wantFrom)
 			}
+
 			if !to.Equal(tc.wantTo) {
 				t.Fatalf("to = %v, want %v", to, tc.wantTo)
 			}
@@ -230,22 +238,28 @@ func TestParseStatsTimeRange_DayPair(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			from, to, err := parseStatsTimeRange(tc.fromDay, tc.toDay, "", "")
 			if tc.wantErrIn != "" {
 				if err == nil {
 					t.Fatalf("expected error containing %q, got nil", tc.wantErrIn)
 				}
+
 				if !strings.Contains(err.Error(), tc.wantErrIn) {
 					t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErrIn)
 				}
+
 				return
 			}
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+
 			if !from.Equal(tc.wantFrom) {
 				t.Fatalf("from = %v, want %v", from, tc.wantFrom)
 			}
+
 			if !to.Equal(tc.wantTo) {
 				t.Fatalf("to = %v, want %v", to, tc.wantTo)
 			}
@@ -320,6 +334,7 @@ func TestParseOptionalStatsTimeRange(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			fromPtr, toPtr, err := parseOptionalStatsTimeRange(tc.fromDay, tc.toDay, tc.fromUtc, tc.toUtc)
 
 			onlyOneUTC := (tc.fromUtc != "") != (tc.toUtc != "")
@@ -329,33 +344,41 @@ func TestParseOptionalStatsTimeRange(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error, got nil")
 				}
+
 				if tc.wantErrIn != "" && !strings.Contains(err.Error(), tc.wantErrIn) {
 					t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErrIn)
 				}
+
 				return
 			}
 
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+
 			if tc.wantFrom == nil && fromPtr != nil {
 				t.Fatalf("expected nil fromPtr, got %v", fromPtr)
 			}
+
 			if tc.wantFrom != nil {
 				if fromPtr == nil {
 					t.Fatalf("expected fromPtr = %v, got nil", *tc.wantFrom)
 				}
+
 				if !fromPtr.Equal(*tc.wantFrom) {
 					t.Fatalf("fromPtr = %v, want %v", *fromPtr, *tc.wantFrom)
 				}
 			}
+
 			if tc.wantTo == nil && toPtr != nil {
 				t.Fatalf("expected nil toPtr, got %v", toPtr)
 			}
+
 			if tc.wantTo != nil {
 				if toPtr == nil {
 					t.Fatalf("expected toPtr = %v, got nil", *tc.wantTo)
 				}
+
 				if !toPtr.Equal(*tc.wantTo) {
 					t.Fatalf("toPtr = %v, want %v", *toPtr, *tc.wantTo)
 				}

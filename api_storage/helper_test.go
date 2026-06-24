@@ -19,8 +19,10 @@ func TestClampPage(t *testing.T) {
 	}
 	for _, tc := range tests {
 		tc := tc
+
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
+
 			if got := clampPage(tc.input); got != tc.want {
 				t.Fatalf("clampPage(%d) = %d, want %d", tc.input, got, tc.want)
 			}
@@ -45,8 +47,10 @@ func TestClampBlockListPageSize(t *testing.T) {
 	}
 	for _, tc := range tests {
 		tc := tc
+
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
+
 			if got := clampBlockListPageSize(tc.input); got != tc.want {
 				t.Fatalf("clampBlockListPageSize(%d) = %d, want %d", tc.input, got, tc.want)
 			}
@@ -71,8 +75,10 @@ func TestClampTxListPageSize(t *testing.T) {
 	}
 	for _, tc := range tests {
 		tc := tc
+
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
+
 			if got := clampTxListPageSize(tc.input); got != tc.want {
 				t.Fatalf("clampTxListPageSize(%d) = %d, want %d", tc.input, got, tc.want)
 			}
@@ -97,8 +103,10 @@ func TestClampErc20PageSize(t *testing.T) {
 	}
 	for _, tc := range tests {
 		tc := tc
+
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
+
 			if got := clampErc20PageSize(tc.input); got != tc.want {
 				t.Fatalf("clampErc20PageSize(%d) = %d, want %d", tc.input, got, tc.want)
 			}
@@ -124,8 +132,10 @@ func TestPaginationOffset(t *testing.T) {
 
 	for _, tc := range tests {
 		tc := tc
+
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
+
 			got := paginationOffset(tc.page, tc.pageSize)
 			if got != tc.want {
 				t.Fatalf("paginationOffset(%d, %d) = %d, want %d", tc.page, tc.pageSize, got, tc.want)

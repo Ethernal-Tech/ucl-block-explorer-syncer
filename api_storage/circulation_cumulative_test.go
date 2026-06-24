@@ -39,10 +39,13 @@ func TestUtcCalendarDate(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := utcCalendarDate(tc.input)
+
 			if !got.Equal(tc.want) {
 				t.Fatalf("utcCalendarDate(%v) = %v, want %v", tc.input, got, tc.want)
 			}
+
 			if got.Location() != time.UTC {
 				t.Fatalf("result is not UTC: %v", got.Location())
 			}
@@ -79,6 +82,7 @@ func TestUtcHourStart(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			got := utcHourStart(tc.input)
 			if !got.Equal(tc.want) {
 				t.Fatalf("utcHourStart(%v) = %v, want %v", tc.input, got, tc.want)
