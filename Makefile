@@ -29,7 +29,7 @@ lint: check-lint
 
 .PHONY: test
 test: check-go
-	go test -race -shuffle=on -timeout 30m `go list ./... | grep -v e2e`
+	go test -race -shuffle=on -coverprofile coverage.out -timeout 30m `go list ./... | grep -v e2e`
 
 .PHONY: test-integration
 test-integration: check-go
