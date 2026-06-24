@@ -29,7 +29,15 @@ lint: check-lint
 
 .PHONY: test
 test: check-go
-	go test -race -shuffle=on -coverprofile coverage.out -timeout 30m `go list ./... | grep -v e2e`
+	go test -race -shuffle=on -timeout 30m `go list ./... | grep -v e2e`
+
+.PHONY: test-integration
+test-integration: check-go
+	go test ./e2e/ -v -run TestIntegration -timeout 30m
+
+.PHONY: test-e2e
+test-e2e: check-go
+	go test ./e2e/ -v -run TestE2E -timeout 30m
 
 .PHONY: benchmark-test
 benchmark-test: check-go
@@ -41,6 +49,8 @@ help:
 	@printf "  %-35s - %s\n" "build" "Build the project"
 	@printf "  %-35s - %s\n" "lint" "Run linters on the codebase"
 	@printf "  %-35s - %s\n" "test" "Run unit tests"
+	@printf "  %-35s - %s\n" "test-integration" "Run integration tests"
+	@printf "  %-35s - %s\n" "test-e2e" "Run E2E tests"
 	@printf "  %-35s - %s\n" "benchmark-test" "Run benchmark tests"
 	@printf "  %-35s - %s\n" "check-git" "Check if git is installed"
 	@printf "  %-35s - %s\n" "check-go" "Check if Go is installed"

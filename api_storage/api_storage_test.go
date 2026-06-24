@@ -21,6 +21,7 @@ func TestNormalizeMaxBlockNumber(t *testing.T) {
 		{"large negative", "-9999", maxBlockNumberDefault},
 		{"non-numeric", "abc", maxBlockNumberDefault},
 		{"alphanumeric", "12abc", maxBlockNumberDefault},
+		{"overflow int64", "9223372036854775808", maxBlockNumberDefault},
 		{"zero", "0", "0"},
 		{"positive", "12345", "12345"},
 		{"leading whitespace", "  42  ", "42"},

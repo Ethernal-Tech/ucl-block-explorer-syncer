@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,7 +43,7 @@ func Test_Retry(t *testing.T) {
 		errCh := make(chan error, 1)
 
 		mockClient := new(mockRPCClient)
-		callCount := 0
+		var callCount atomic.Int32
 
 		mockClient.On("CallContext",
 			mock.Anything,
@@ -51,9 +52,9 @@ func Test_Retry(t *testing.T) {
 			mock.Anything).
 			Return(nil, nil).
 			Run(func(args mock.Arguments) {
-				callCount++
+				callCount.Add(1)
 
-				if callCount < 3 {
+				if callCount.Load() < 3 {
 					mockClient.ExpectedCalls[0].ReturnArguments = mock.Arguments{
 						nil,
 						errors.New("temporary rpc error"),
@@ -89,13 +90,13 @@ func Test_Retry(t *testing.T) {
 		assert.NoError(t, err)
 
 		assert.Eventually(t, func() bool {
-			return callCount >= 3
+			return callCount.Load() >= 3
 		}, 1*time.Second, 50*time.Millisecond)
 
 		close(ctrlCh)
 		<-doneCh
 
-		assert.Equal(t, 3, callCount)
+		assert.Equal(t, int32(3), callCount.Load())
 		assert.Len(t, errCh, 0)
 	})
 
@@ -105,7 +106,7 @@ func Test_Retry(t *testing.T) {
 		errCh := make(chan error, 1)
 
 		mockClient := new(mockRPCClient)
-		callCount := 0
+		var callCount atomic.Int32
 
 		mockClient.On("CallContext",
 			mock.Anything,
@@ -114,7 +115,7 @@ func Test_Retry(t *testing.T) {
 			mock.Anything).
 			Return(nil, nil).
 			Run(func(args mock.Arguments) {
-				callCount++
+				callCount.Add(1)
 				mockClient.ExpectedCalls[0].ReturnArguments = mock.Arguments{
 					nil,
 					errors.New("persistent rpc error"),
@@ -143,7 +144,7 @@ func Test_Retry(t *testing.T) {
 			t.Fatal("worker did not shut down within the expected time limit")
 		}
 
-		assert.Equal(t, 3, callCount)
+		assert.Equal(t, int32(3), callCount.Load())
 	})
 }
 

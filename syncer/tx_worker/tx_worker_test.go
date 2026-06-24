@@ -3,6 +3,7 @@ package txworker_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,14 +43,14 @@ func Test_Retry(t *testing.T) {
 		}, 1)
 
 		mockClient := new(mockRPCClient)
-		callCount := 0
+		var callCount atomic.Int32
 
 		mockClient.On("BatchCallContext", mock.Anything, mock.Anything).
 			Return(nil).
 			Run(func(args mock.Arguments) {
-				callCount++
+				callCount.Add(1)
 
-				if callCount < 3 {
+				if callCount.Load() < 3 {
 					mockClient.ExpectedCalls[0].ReturnArguments = mock.Arguments{
 						errors.New("temporary batch rpc error"),
 					}
@@ -83,7 +84,7 @@ func Test_Retry(t *testing.T) {
 		}
 
 		assert.Eventually(t, func() bool {
-			return callCount >= 2
+			return callCount.Load() >= 2
 		}, 5*time.Second, 50*time.Millisecond)
 
 		<-doneCh
@@ -100,12 +101,12 @@ func Test_Retry(t *testing.T) {
 		}, 1)
 
 		mockClient := new(mockRPCClient)
-		callCount := 0
+		var callCount atomic.Int32
 
 		mockClient.On("BatchCallContext", mock.Anything, mock.Anything).
 			Return(nil).
 			Run(func(args mock.Arguments) {
-				callCount++
+				callCount.Add(1)
 
 				mockClient.ExpectedCalls[0].ReturnArguments = mock.Arguments{
 					errors.New("persistent batch rpc error"),
@@ -144,6 +145,6 @@ func Test_Retry(t *testing.T) {
 			t.Fatal("worker did not shut down within the expected time limit")
 		}
 
-		assert.Equal(t, int64(3), int64(callCount))
+		assert.Equal(t, int32(3), callCount.Load())
 	})
 }

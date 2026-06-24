@@ -207,14 +207,14 @@ func TestParseStatsTimeRange_DayPair(t *testing.T) {
 		wantErrIn string
 	}{
 		{
-			name:     "valid range — toDay is inclusive, so toExclusive = toDay+1",
+			name:     "valid range - toDay is inclusive, so toExclusive = toDay+1",
 			fromDay:  "2024-03-01",
 			toDay:    "2024-03-05",
 			wantFrom: time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC),
 			wantTo:   time.Date(2024, 3, 6, 0, 0, 0, 0, time.UTC),
 		},
 		{
-			name:     "empty fromDay defaults to toDay — single-day range",
+			name:     "empty fromDay defaults to toDay - single-day range",
 			fromDay:  "",
 			toDay:    "2024-06-15",
 			wantFrom: time.Date(2024, 6, 15, 0, 0, 0, 0, time.UTC),
@@ -290,12 +290,12 @@ func TestParseOptionalStatsTimeRange(t *testing.T) {
 			wantTo:   nil,
 		},
 		{
-			name:   "only toDay — fromPtr nil, toPtr set to toDay+1",
+			name:   "only toDay - fromPtr nil, toPtr set to toDay+1",
 			toDay:  "2024-06-10",
 			wantTo: ptr(d(2024, 6, 11)),
 		},
 		{
-			name:     "only fromDay — toPtr nil, fromPtr set",
+			name:     "only fromDay - toPtr nil, fromPtr set",
 			fromDay:  "2024-06-01",
 			wantFrom: ptr(d(2024, 6, 1)),
 		},
@@ -314,7 +314,7 @@ func TestParseOptionalStatsTimeRange(t *testing.T) {
 			wantTo:   ptr(d(2024, 1, 31)),
 		},
 		{
-			name:      "only fromUtc — error",
+			name:      "only fromUtc - error",
 			fromUtc:   "2024-01-01T00:00:00Z",
 			wantErrIn: "",
 		},
