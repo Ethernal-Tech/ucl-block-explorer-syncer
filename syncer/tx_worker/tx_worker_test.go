@@ -43,6 +43,7 @@ func Test_Retry(t *testing.T) {
 		}, 1)
 
 		mockClient := new(mockRPCClient)
+
 		var callCount atomic.Int32
 
 		mockClient.On("BatchCallContext", mock.Anything, mock.Anything).
@@ -101,6 +102,7 @@ func Test_Retry(t *testing.T) {
 		}, 1)
 
 		mockClient := new(mockRPCClient)
+
 		var callCount atomic.Int32
 
 		mockClient.On("BatchCallContext", mock.Anything, mock.Anything).

@@ -43,6 +43,7 @@ func Test_Retry(t *testing.T) {
 		errCh := make(chan error, 1)
 
 		mockClient := new(mockRPCClient)
+
 		var callCount atomic.Int32
 
 		mockClient.On("CallContext",
@@ -106,6 +107,7 @@ func Test_Retry(t *testing.T) {
 		errCh := make(chan error, 1)
 
 		mockClient := new(mockRPCClient)
+
 		var callCount atomic.Int32
 
 		mockClient.On("CallContext",
@@ -116,6 +118,7 @@ func Test_Retry(t *testing.T) {
 			Return(nil, nil).
 			Run(func(args mock.Arguments) {
 				callCount.Add(1)
+
 				mockClient.ExpectedCalls[0].ReturnArguments = mock.Arguments{
 					nil,
 					errors.New("persistent rpc error"),
