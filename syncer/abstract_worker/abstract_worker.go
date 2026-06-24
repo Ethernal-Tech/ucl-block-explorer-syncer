@@ -115,7 +115,7 @@ func NewAbstractWorker(
 		errCh:           errCh,
 		processInterval: 2000,
 		id:              fmt.Sprintf("%x", rand.Uint64()), //nolint:gosec
-		workerType:      "abtract",
+		workerType:      "abstract",
 	}
 
 	for _, o := range opts {
