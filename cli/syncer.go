@@ -3,10 +3,14 @@ package cli
 import (
 	"database/sql"
 	"fmt"
+	"log"
+	"net/http"
+	"time"
 
 	eoaactivitybackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/eoa_activity_backend"
 	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
 	esgaggregationbackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/esg_aggregation_backend"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/metrics"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/storage_handler"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
@@ -36,6 +40,7 @@ var (
 	esgAggregationStats        bool
 	esgAggregationPollInterval uint64
 	configPath                 string
+	metricsAddr                string
 )
 
 var syncerCommand = &cobra.Command{
@@ -113,6 +118,33 @@ func setOptionalFlags() {
 		"how often the syncer polls for new ESG aggregation data, in milliseconds")
 
 	syncerCommand.Flags().StringVar(&configPath, "config", "", "path to JSON config file")
+
+	syncerCommand.Flags().StringVar(&metricsAddr, "metrics-addr", "0.0.0.0:2112",
+		"TCP listen address for the Prometheus /metrics endpoint (served whenever the syncer runs)")
+}
+
+// startMetricsServer launches a dedicated lightweight HTTP server that exposes
+// the syncer's Prometheus metrics at /metrics. It runs alongside the syncer
+// (independent of the optional `api` command) so metrics are available whenever
+// syncing runs. The returned server is closed by the caller on shutdown.
+func startMetricsServer(addr string) *http.Server {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		log.Printf("metrics endpoint listening on %s/metrics", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("metrics server stopped: %v", err)
+		}
+	}()
+
+	return srv
 }
 
 func execute(cmd *cobra.Command, args []string) error {
@@ -222,6 +254,9 @@ func execute(cmd *cobra.Command, args []string) error {
 		opts = append(opts, syncer.WithEsgAggregationStats(backend),
 			syncer.WithESGAggregationPollInterval(esgAggregationPollInterval))
 	}
+
+	metricsServer := startMetricsServer(metricsAddr)
+	defer metricsServer.Close() //nolint:errcheck
 
 	if syn, err := syncer.NewSyncer(rpcUrl, sh, opts...); err == nil {
 		if err := syn.Start(); err != nil {
