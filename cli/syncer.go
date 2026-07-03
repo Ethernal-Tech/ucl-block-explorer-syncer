@@ -139,6 +139,7 @@ func startMetricsServer(addr string) *http.Server {
 
 	go func() {
 		log.Printf("metrics endpoint listening on %s/metrics", addr)
+
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("metrics server stopped: %v", err)
 		}

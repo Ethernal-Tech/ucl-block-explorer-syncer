@@ -1088,6 +1088,7 @@ func (s *Syncer) sampleMetrics() {
 	headClient, err := rpc.Dial(s.rpcURL)
 	if err != nil {
 		s.log("metrics sampler: cannot dial rpc for chain head: %v", err)
+
 		headClient = nil
 	} else {
 		defer headClient.Close()
@@ -1103,6 +1104,7 @@ func (s *Syncer) sampleMetrics() {
 		for _, h := range s.txwHandles {
 			txJobs += len(h.jobCh)
 		}
+
 		metrics.QueueDepth.WithLabelValues(metrics.QueueTxJobs).Set(float64(txJobs))
 
 		// The tx workers share a single doneCh; sampling any handle's reference
@@ -1119,11 +1121,15 @@ func (s *Syncer) sampleMetrics() {
 		}
 
 		var head hexutil.Uint64
+
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		callErr := headClient.CallContext(ctx, &head, "eth_blockNumber")
+
 		cancel()
+
 		if callErr != nil {
 			s.log("metrics sampler: cannot fetch chain head: %v", callErr)
+
 			return
 		}
 
@@ -1134,6 +1140,7 @@ func (s *Syncer) sampleMetrics() {
 		if lag < 0 {
 			lag = 0
 		}
+
 		metrics.IndexingLagBlocks.Set(float64(lag))
 	}
 
