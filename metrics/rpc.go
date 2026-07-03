@@ -7,14 +7,10 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
-// InstrumentedRPCClient wraps a *rpc.Client and records the duration of every
+// InstrumentedRPCClient wraps *rpc.Client and records the duration of every
 // CallContext / BatchCallContext invocation into [NodeRPCDuration], labelled by
-// JSON-RPC method.
-//
-// It embeds *rpc.Client, so it satisfies the (structural) rpcClient interfaces
-// the block and tx workers expect and can be passed transparently in place of a
-// raw client. Embedding also forwards Close and the rest of the client surface,
-// so the original *rpc.Client can still own the connection lifecycle.
+// JSON-RPC method. It satisfies the rpcClient interface expected by workers and
+// forwards all other client methods via embedding.
 type InstrumentedRPCClient struct {
 	*rpc.Client
 }
@@ -24,7 +20,6 @@ func NewInstrumentedRPCClient(c *rpc.Client) *InstrumentedRPCClient {
 	return &InstrumentedRPCClient{Client: c}
 }
 
-// CallContext times a single JSON-RPC call and labels it by method.
 func (c *InstrumentedRPCClient) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
 	start := time.Now()
 	err := c.Client.CallContext(ctx, result, method, args...)

@@ -726,8 +726,7 @@ func (s *Syncer) Start() error {
 
 			s.log("block %v processed", currentBlock)
 
-			// Publish throughput + progress. lastIndexedBlock feeds the
-			// indexing-lag gauge sampled by the metrics goroutine.
+			// lastIndexedBlock feeds the indexing-lag gauge sampled by the metrics goroutine.
 			metrics.BlocksProcessed.Inc()
 			metrics.TxsProcessed.Add(float64(realTxCount))
 			s.lastIndexedBlock.Store(currentBlock)
@@ -1051,11 +1050,9 @@ func (s *Syncer) Start() error {
 
 				s.shutDownHandles()
 			case <-s.shutDownCh:
-				close(s.txpwHandle.ctrlCh)
+			close(s.txpwHandle.ctrlCh)
 
-				fmt.Println("TU SAM")
-
-				select {
+			select {
 				case err := <-s.txpwHandle.errCh:
 					s.log("tx pool worker encountered a fatal error: %s", err.Error())
 
@@ -1066,10 +1063,7 @@ func (s *Syncer) Start() error {
 		}()
 	}
 
-	// Metrics sampler goroutine - periodically publishes the indexing-lag gauge
-	// (chain head vs. last indexed) and the inter-worker queue depths. It uses a
-	// dedicated RPC client for the head query and exits on shutdown. It is not
-	// part of wg: it only observes state and must never delay shutdown.
+	// Not part of wg: sampleMetrics only observes state and must never delay shutdown.
 	go s.sampleMetrics()
 
 	wg.Wait()
@@ -1100,7 +1094,6 @@ func (s *Syncer) sampleMetrics() {
 	}
 
 	sample := func() {
-		// Queue depths.
 		s.m.Lock()
 		blockCache := s.l.Len()
 		s.m.Unlock()
@@ -1118,7 +1111,6 @@ func (s *Syncer) sampleMetrics() {
 			metrics.QueueDepth.WithLabelValues(metrics.QueueTxDone).Set(float64(len(s.txwHandles[0].doneCh)))
 		}
 
-		// Last indexed + chain head + lag.
 		lastIndexed := s.lastIndexedBlock.Load()
 		metrics.LastIndexedBlock.Set(float64(lastIndexed))
 
@@ -1338,7 +1330,6 @@ func (s *Syncer) createTxWorkerHandle(
 	startBlock uint64,
 ) (*txWorkerHandle, error) {
 	processTxsFn := func(txs []*types.Transaction) error {
-		// TODO: write explanation
 		return nil
 	}
 
