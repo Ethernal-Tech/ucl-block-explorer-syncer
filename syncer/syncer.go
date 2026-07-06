@@ -1050,9 +1050,9 @@ func (s *Syncer) Start() error {
 
 				s.shutDownHandles()
 			case <-s.shutDownCh:
-			close(s.txpwHandle.ctrlCh)
+				close(s.txpwHandle.ctrlCh)
 
-			select {
+				select {
 				case err := <-s.txpwHandle.errCh:
 					s.log("tx pool worker encountered a fatal error: %s", err.Error())
 
@@ -1084,15 +1084,15 @@ func (s *Syncer) sampleMetrics() {
 	defer ticker.Stop()
 
 	// Dedicated client for the head query so it never contends with the workers'
-	// clients. If it cannot be established, queue-depth sampling still proceeds.
-	headClient, err := rpc.Dial(s.rpcURL)
-	if err != nil {
-		s.log("metrics sampler: cannot dial rpc for chain head: %v", err)
+	// clients. If it cannot be established, queue-depth sampling still proceeds and
+	// the dial is retried on each sample tick until it succeeds.
+	var headClient *rpc.Client
 
-		headClient = nil
-	} else {
-		defer headClient.Close()
-	}
+	defer func() {
+		if headClient != nil {
+			headClient.Close()
+		}
+	}()
 
 	sample := func() {
 		s.m.Lock()
@@ -1117,7 +1117,14 @@ func (s *Syncer) sampleMetrics() {
 		metrics.LastIndexedBlock.Set(float64(lastIndexed))
 
 		if headClient == nil {
-			return
+			client, err := rpc.Dial(s.rpcURL)
+			if err != nil {
+				s.log("metrics sampler: cannot dial rpc for chain head: %v", err)
+
+				return
+			}
+
+			headClient = client
 		}
 
 		var head hexutil.Uint64
