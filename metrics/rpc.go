@@ -37,6 +37,7 @@ func (c *InstrumentedRPCClient) CallContext(
 func (c *InstrumentedRPCClient) BatchCallContext(ctx context.Context, b []rpc.BatchElem) error {
 	start := time.Now().UTC()
 	err := c.Client.BatchCallContext(ctx, b)
+
 	NodeRPCDuration.WithLabelValues("batch").Observe(time.Since(start).Seconds())
 
 	return err

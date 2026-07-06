@@ -689,6 +689,7 @@ func (s *Syncer) Start() error {
 				job.Block = block
 
 				s.txwHandles[i].jobCh <- job
+
 				s.txJobsInFlight.Add(1)
 
 				s.log("job [%v-%v] dispatched", job.From, job.To)
@@ -703,11 +704,13 @@ func (s *Syncer) Start() error {
 					s.log("tx worker %v finished", id)
 
 					s.txJobsInFlight.Add(-1)
+
 					l--
 				case err := <-s.txwHandles[0].errCh:
 					s.log("transaction worker %v encountered a fatal error: %s", err.Id, err.Err.Error())
 
 					s.txJobsInFlight.Add(-1)
+
 					errOcured++
 					l--
 				}

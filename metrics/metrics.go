@@ -44,13 +44,15 @@ var (
 
 	BlocksProcessed = factory.NewCounter(prometheus.CounterOpts{
 		Name: "syncer_blocks_processed_total",
-		Help: "Total number of blocks fully processed (indexed) by the current syncer run (excludes blocks indexed by previous runs).",
+		Help: "Total number of blocks fully processed (indexed) by the current syncer run " +
+			"(excludes blocks indexed by previous runs).",
 	})
 
 	// TxsProcessed does not count the empty-block sentinel transaction.
 	TxsProcessed = factory.NewCounter(prometheus.CounterOpts{
 		Name: "syncer_txs_processed_total",
-		Help: "Total number of transactions processed (indexed) by the current syncer run (excludes transactions indexed by previous runs).",
+		Help: "Total number of transactions processed (indexed) by the current syncer run " +
+			"(excludes transactions indexed by previous runs).",
 	})
 
 	// QueueDepth labelled by queue (see Queue* constants); a queue trending
