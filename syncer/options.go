@@ -147,6 +147,17 @@ func WithMaxTxWorkers(maxTxWorkers uint64) SyncerOption {
 	}
 }
 
+// WithMetrics serves Prometheus metrics at /metrics on the given TCP address (e.g. "0.0.0.0:2112")
+// and starts the sampler goroutine. An empty address disables both. By default, not served.
+func WithMetrics(addr string) SyncerOption {
+	return func(s *Syncer) error {
+		s.metricsEnabled = addr != ""
+		s.metricsAddr = addr
+
+		return nil
+	}
+}
+
 // WithErc20Stats configures the syncer to also track statistics for various ERC-20 tokens using
 // the provided backend. For additional information on the underlying aggregation process, see
 // the [Erc20Backend] interface documentation.

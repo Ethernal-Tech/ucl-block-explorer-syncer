@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -292,6 +293,13 @@ type Syncer struct {
 	// logic. By default, once per day.
 	esgAggregationPollInterval uint64
 
+	// metricsEnabled gates the /metrics endpoint and the sampler goroutine (instruments are always
+	// recorded). Enabled via [WithMetrics] with a non-empty address. By default, false.
+	metricsEnabled bool
+
+	// metricsAddr is the TCP listen address for the /metrics endpoint. Only used when metricsEnabled.
+	metricsAddr string
+
 	// Internal fields used by the syncer:
 
 	// m, s, and l form an internal block queue used to pass blocks from the block worker, via
@@ -331,6 +339,10 @@ type Syncer struct {
 	// transactions persisted). It is written by the transaction worker controller goroutine and
 	// read by the metrics sampler goroutine, hence atomic.
 	lastIndexedBlock atomic.Uint64
+
+	// txJobsInFlight holds the number of tx-worker jobs dispatched but not yet completed. Written
+	// by the tx worker controller goroutine and read by the metrics sampler goroutine, hence atomic.
+	txJobsInFlight atomic.Int64
 }
 
 // NewSyncer constructs a new [Syncer] instance. rpcURL must be a valid RPC endpoint URL used
@@ -393,10 +405,11 @@ func NewSyncer(
 	syncer.l = list.New()
 	syncer.shutDownCh = make(chan struct{})
 
-	// Seed last-indexed with the tx worker start block so the indexing-lag gauge
-	// is meaningful from the first sample (rather than reporting the whole chain
-	// height as lag until the first block is processed).
-	syncer.lastIndexedBlock.Store(syncer.startBlockTW)
+	// Seed last-indexed with the block before startBlockTW (the first block to be
+	// indexed) so the indexing-lag gauge is meaningful from the first sample.
+	if syncer.startBlockTW > 0 {
+		syncer.lastIndexedBlock.Store(syncer.startBlockTW - 1)
+	}
 
 	// Block worker handle construction.
 	{
@@ -676,6 +689,7 @@ func (s *Syncer) Start() error {
 				job.Block = block
 
 				s.txwHandles[i].jobCh <- job
+				s.txJobsInFlight.Add(1)
 
 				s.log("job [%v-%v] dispatched", job.From, job.To)
 			}
@@ -688,10 +702,12 @@ func (s *Syncer) Start() error {
 				case id := <-s.txwHandles[0].doneCh:
 					s.log("tx worker %v finished", id)
 
+					s.txJobsInFlight.Add(-1)
 					l--
 				case err := <-s.txwHandles[0].errCh:
 					s.log("transaction worker %v encountered a fatal error: %s", err.Id, err.Err.Error())
 
+					s.txJobsInFlight.Add(-1)
 					errOcured++
 					l--
 				}
@@ -1063,24 +1079,47 @@ func (s *Syncer) Start() error {
 		}()
 	}
 
-	// Not part of wg: sampleMetrics only observes state and must never delay shutdown.
-	go s.sampleMetrics()
+	if s.metricsEnabled {
+		srv := s.startMetricsServer()
+		defer srv.Close() //nolint:errcheck
+
+		// Not part of wg: sampleMetrics only observes state and must never delay shutdown.
+		go s.sampleMetrics()
+	}
 
 	wg.Wait()
 
 	return nil
 }
 
+// startMetricsServer serves the Prometheus metrics at /metrics on [Syncer.metricsAddr]. The
+// returned server is closed by [Syncer.Start] on shutdown.
+func (s *Syncer) startMetricsServer() *http.Server {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+
+	srv := &http.Server{
+		Addr:              s.metricsAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		s.log("metrics endpoint listening on %s/metrics", s.metricsAddr)
+
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.log("metrics server stopped: %v", err)
+		}
+	}()
+
+	return srv
+}
+
 // sampleMetrics periodically publishes observable metrics that cannot be updated
 // inline at an event boundary: the node chain head / indexing lag and the depths
 // of the inter-worker queues. It runs until [Syncer.shutDownCh] is closed.
 func (s *Syncer) sampleMetrics() {
-	interval := time.Duration(s.pollInterval) * time.Millisecond
-	if interval <= 0 {
-		interval = 2 * time.Second
-	}
-
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(time.Duration(s.pollInterval) * time.Millisecond)
 	defer ticker.Stop()
 
 	// Dedicated client for the head query so it never contends with the workers'
@@ -1100,18 +1139,7 @@ func (s *Syncer) sampleMetrics() {
 		s.m.Unlock()
 		metrics.QueueDepth.WithLabelValues(metrics.QueueBlockCache).Set(float64(blockCache))
 
-		txJobs := 0
-		for _, h := range s.txwHandles {
-			txJobs += len(h.jobCh)
-		}
-
-		metrics.QueueDepth.WithLabelValues(metrics.QueueTxJobs).Set(float64(txJobs))
-
-		// The tx workers share a single doneCh; sampling any handle's reference
-		// yields the same buffered count.
-		if len(s.txwHandles) > 0 {
-			metrics.QueueDepth.WithLabelValues(metrics.QueueTxDone).Set(float64(len(s.txwHandles[0].doneCh)))
-		}
+		metrics.QueueDepth.WithLabelValues(metrics.QueueTxJobs).Set(float64(s.txJobsInFlight.Load()))
 
 		lastIndexed := s.lastIndexedBlock.Load()
 		metrics.LastIndexedBlock.Set(float64(lastIndexed))
@@ -1344,6 +1372,7 @@ func (s *Syncer) createTxWorkerHandle(
 	startBlock uint64,
 ) (*txWorkerHandle, error) {
 	processTxsFn := func(txs []*types.Transaction) error {
+		// TODO: write explanation
 		return nil
 	}
 

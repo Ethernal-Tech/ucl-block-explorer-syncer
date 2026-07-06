@@ -33,19 +33,11 @@ func (c *InstrumentedRPCClient) CallContext(
 	return err
 }
 
-// BatchCallContext times a batch JSON-RPC call. The whole batch is recorded
-// under the first element's method (batches are homogeneous in this codebase);
-// an empty batch is labelled "batch".
+// BatchCallContext times a batch JSON-RPC call under the "batch" label.
 func (c *InstrumentedRPCClient) BatchCallContext(ctx context.Context, b []rpc.BatchElem) error {
 	start := time.Now().UTC()
 	err := c.Client.BatchCallContext(ctx, b)
-
-	method := "batch"
-	if len(b) > 0 {
-		method = b[0].Method
-	}
-
-	NodeRPCDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
+	NodeRPCDuration.WithLabelValues("batch").Observe(time.Since(start).Seconds())
 
 	return err
 }
