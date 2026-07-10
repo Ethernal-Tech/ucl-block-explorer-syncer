@@ -5,14 +5,17 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
 
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/metrics"
 	abstractworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/abstract_worker"
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
@@ -290,6 +293,13 @@ type Syncer struct {
 	// logic. By default, once per day.
 	esgAggregationPollInterval uint64
 
+	// metricsEnabled gates the /metrics endpoint and the sampler goroutine (instruments are always
+	// recorded). Enabled via [WithMetrics] with a non-empty address. By default, false.
+	metricsEnabled bool
+
+	// metricsAddr is the TCP listen address for the /metrics endpoint. Only used when metricsEnabled.
+	metricsAddr string
+
 	// Internal fields used by the syncer:
 
 	// m, s, and l form an internal block queue used to pass blocks from the block worker, via
@@ -324,6 +334,15 @@ type Syncer struct {
 	// down gracefully.
 	shutDownCh chan struct{}
 	once       sync.Once
+
+	// lastIndexedBlock holds the number of the most recently fully-indexed block (block and its
+	// transactions persisted). It is written by the transaction worker controller goroutine and
+	// read by the metrics sampler goroutine, hence atomic.
+	lastIndexedBlock atomic.Uint64
+
+	// txJobsInFlight holds the number of tx-worker jobs dispatched but not yet completed. Written
+	// by the tx worker controller goroutine and read by the metrics sampler goroutine, hence atomic.
+	txJobsInFlight atomic.Int64
 }
 
 // NewSyncer constructs a new [Syncer] instance. rpcURL must be a valid RPC endpoint URL used
@@ -385,6 +404,12 @@ func NewSyncer(
 	syncer.s = make(chan struct{}, 1)
 	syncer.l = list.New()
 	syncer.shutDownCh = make(chan struct{})
+
+	// Seed last-indexed with the block before startBlockTW (the first block to be
+	// indexed) so the indexing-lag gauge is meaningful from the first sample.
+	if syncer.startBlockTW > 0 {
+		syncer.lastIndexedBlock.Store(syncer.startBlockTW - 1)
+	}
 
 	// Block worker handle construction.
 	{
@@ -652,6 +677,10 @@ func (s *Syncer) Start() error {
 			default:
 			}
 
+			// Captured before the empty-block sentinel may be appended below, so
+			// the txs-processed counter reflects only real transactions.
+			realTxCount := len(block.Transactions)
+
 			jobs := helper.CreateJobs(uint64(len(block.Transactions)), uint64(len(s.txwHandles)))
 
 			s.log("%v jobs created", len(jobs))
@@ -660,6 +689,8 @@ func (s *Syncer) Start() error {
 				job.Block = block
 
 				s.txwHandles[i].jobCh <- job
+
+				s.txJobsInFlight.Add(1)
 
 				s.log("job [%v-%v] dispatched", job.From, job.To)
 			}
@@ -672,9 +703,13 @@ func (s *Syncer) Start() error {
 				case id := <-s.txwHandles[0].doneCh:
 					s.log("tx worker %v finished", id)
 
+					s.txJobsInFlight.Add(-1)
+
 					l--
 				case err := <-s.txwHandles[0].errCh:
 					s.log("transaction worker %v encountered a fatal error: %s", err.Id, err.Err.Error())
+
+					s.txJobsInFlight.Add(-1)
 
 					errOcured++
 					l--
@@ -709,6 +744,11 @@ func (s *Syncer) Start() error {
 			}
 
 			s.log("block %v processed", currentBlock)
+
+			// lastIndexedBlock feeds the indexing-lag gauge sampled by the metrics goroutine.
+			metrics.BlocksProcessed.Inc()
+			metrics.TxsProcessed.Add(float64(realTxCount))
+			s.lastIndexedBlock.Store(currentBlock)
 
 			currentBlock++
 		}
@@ -1031,8 +1071,6 @@ func (s *Syncer) Start() error {
 			case <-s.shutDownCh:
 				close(s.txpwHandle.ctrlCh)
 
-				fmt.Println("TU SAM")
-
 				select {
 				case err := <-s.txpwHandle.errCh:
 					s.log("tx pool worker encountered a fatal error: %s", err.Error())
@@ -1044,9 +1082,116 @@ func (s *Syncer) Start() error {
 		}()
 	}
 
+	if s.metricsEnabled {
+		srv := s.startMetricsServer()
+		defer srv.Close() //nolint:errcheck
+
+		// Not part of wg: sampleMetrics only observes state and must never delay shutdown.
+		go s.sampleMetrics()
+	}
+
 	wg.Wait()
 
 	return nil
+}
+
+// startMetricsServer serves the Prometheus metrics at /metrics on [Syncer.metricsAddr]. The
+// returned server is closed by [Syncer.Start] on shutdown.
+func (s *Syncer) startMetricsServer() *http.Server {
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", metrics.Handler())
+
+	srv := &http.Server{
+		Addr:              s.metricsAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		s.log("metrics endpoint listening on %s/metrics", s.metricsAddr)
+
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.log("metrics server stopped: %v", err)
+		}
+	}()
+
+	return srv
+}
+
+// sampleMetrics periodically publishes observable metrics that cannot be updated
+// inline at an event boundary: the node chain head / indexing lag and the depths
+// of the inter-worker queues. It runs until [Syncer.shutDownCh] is closed.
+func (s *Syncer) sampleMetrics() {
+	ticker := time.NewTicker(time.Duration(s.pollInterval) * time.Millisecond)
+	defer ticker.Stop()
+
+	// Dedicated client for the head query so it never contends with the workers'
+	// clients. If it cannot be established, queue-depth sampling still proceeds and
+	// the dial is retried on each sample tick until it succeeds.
+	var headClient *rpc.Client
+
+	defer func() {
+		if headClient != nil {
+			headClient.Close()
+		}
+	}()
+
+	sample := func() {
+		s.m.Lock()
+		blockCache := s.l.Len()
+		s.m.Unlock()
+		metrics.QueueDepth.WithLabelValues(metrics.QueueBlockCache).Set(float64(blockCache))
+
+		metrics.QueueDepth.WithLabelValues(metrics.QueueTxJobs).Set(float64(s.txJobsInFlight.Load()))
+
+		lastIndexed := s.lastIndexedBlock.Load()
+		metrics.LastIndexedBlock.Set(float64(lastIndexed))
+
+		if headClient == nil {
+			client, err := rpc.Dial(s.rpcURL)
+			if err != nil {
+				s.log("metrics sampler: cannot dial rpc for chain head: %v", err)
+
+				return
+			}
+
+			headClient = client
+		}
+
+		var head hexutil.Uint64
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		callErr := headClient.CallContext(ctx, &head, "eth_blockNumber")
+
+		cancel()
+
+		if callErr != nil {
+			s.log("metrics sampler: cannot fetch chain head: %v", callErr)
+
+			return
+		}
+
+		chainHead := uint64(head)
+		metrics.ChainHeadBlock.Set(float64(chainHead))
+
+		lag := int64(chainHead) - int64(lastIndexed)
+		if lag < 0 {
+			lag = 0
+		}
+
+		metrics.IndexingLagBlocks.Set(float64(lag))
+	}
+
+	sample()
+
+	for {
+		select {
+		case <-s.shutDownCh:
+			return
+		case <-ticker.C:
+			sample()
+		}
+	}
 }
 
 func (s *Syncer) shutDownHandles() {
@@ -1125,7 +1270,10 @@ func (s *Syncer) createBlockWorkerHandle(
 	}
 
 	bw, err := blockworker.NewBlockWorker(
-		client,
+		// Wrap the client so each node RPC call is timed into
+		// syncer_node_rpc_duration_seconds. The handle keeps the raw client for
+		// connection lifecycle (Close).
+		metrics.NewInstrumentedRPCClient(client),
 		processBlockFn,
 		ctrlCh,
 		doneCh,
@@ -1250,7 +1398,10 @@ func (s *Syncer) createTxWorkerHandle(
 	}
 
 	txw, err := txworker.NewTxWorker(
-		client,
+		// Wrap the client so each (batch) node RPC call is timed into
+		// syncer_node_rpc_duration_seconds. The handle keeps the raw client for
+		// connection lifecycle (Close).
+		metrics.NewInstrumentedRPCClient(client),
 		processTxsFn,
 		fetchTxDataFn,
 		doneCh,

@@ -36,6 +36,7 @@ var (
 	esgAggregationStats        bool
 	esgAggregationPollInterval uint64
 	configPath                 string
+	metricsAddr                string
 )
 
 var syncerCommand = &cobra.Command{
@@ -113,6 +114,9 @@ func setOptionalFlags() {
 		"how often the syncer polls for new ESG aggregation data, in milliseconds")
 
 	syncerCommand.Flags().StringVar(&configPath, "config", "", "path to JSON config file")
+
+	syncerCommand.Flags().StringVar(&metricsAddr, "metrics-addr", "0.0.0.0:2112",
+		"TCP listen address for the Prometheus /metrics endpoint; pass an empty string to disable metrics")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
@@ -163,6 +167,7 @@ func execute(cmd *cobra.Command, args []string) error {
 		syncer.WithMaxTxWorkers(txWorkers),
 		syncer.WithBlockWorkerStartBlock(*bwStartBlock),
 		syncer.WithTransactionkWorkerStartBlock(*txwStartBlock),
+		syncer.WithMetrics(metricsAddr),
 	}
 
 	if logging {
