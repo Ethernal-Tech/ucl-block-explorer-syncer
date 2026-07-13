@@ -3,6 +3,7 @@ package cli
 import (
 	"database/sql"
 	"fmt"
+	"os"
 
 	eoaactivitybackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/eoa_activity_backend"
 	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
@@ -37,6 +38,7 @@ var (
 	esgAggregationPollInterval uint64
 	configPath                 string
 	metricsAddr                string
+	otelEndpoint               string
 )
 
 var syncerCommand = &cobra.Command{
@@ -117,6 +119,9 @@ func setOptionalFlags() {
 
 	syncerCommand.Flags().StringVar(&metricsAddr, "metrics-addr", "0.0.0.0:2112",
 		"TCP listen address for the Prometheus /metrics endpoint; pass an empty string to disable metrics")
+
+	syncerCommand.Flags().StringVar(&otelEndpoint, "otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		"OTLP trace collector endpoint (e.g. http://localhost:4317); empty disables tracing")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
@@ -168,6 +173,7 @@ func execute(cmd *cobra.Command, args []string) error {
 		syncer.WithBlockWorkerStartBlock(*bwStartBlock),
 		syncer.WithTransactionkWorkerStartBlock(*txwStartBlock),
 		syncer.WithMetrics(metricsAddr),
+		syncer.WithTracing(otelEndpoint),
 	}
 
 	if logging {
