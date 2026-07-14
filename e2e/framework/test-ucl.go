@@ -297,6 +297,9 @@ func (u *UCL) TransferERC20(privateKey string, contractAddr, to common.Address, 
 	return u.sendTx(privateKey, &contractAddr, data, big.NewInt(0), 200000)
 }
 
+// RestartNode stops the node at the given index, waits for `downtime`, then starts
+// it again with an identical command line - same RPC port, same data dir.
+// Used to simulate a node outage underneath the syncer, without restarting the syncer.
 func (u *UCL) RestartNode(index int, downtime time.Duration) {
 	if index >= len(nodesRpcPorts) {
 		u.t.Fatalf("node index %d out of range (max %d)", index, len(nodesRpcPorts)-1)
@@ -305,7 +308,8 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 	port := nodesRpcPorts[index]
 	pattern := fmt.Sprintf("jsonrpc :%d", port)
 
-	// 1. nadji PID pre gasenja
+	// Find the node's PID by matching its RPC port in the command line. The node is
+	// spawned by the UCL bash script, so we have no *exec.Cmd handle for it.
 	out, err := exec.Command("pgrep", "-f", pattern).Output() //nolint:gosec
 	if err != nil {
 		u.t.Fatalf("node %d not running (pgrep %q): %v", index, pattern, err)
@@ -316,12 +320,15 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 		u.t.Fatalf("failed to parse pid for node %d: %v", index, err)
 	}
 
-	// 2. procitaj tacnu komandnu liniju i cwd (Linux; na macOS koristi `ps -o args= -p`)
+	// Capture the exact command line and working directory BEFORE killing the process -
+	// this is what lets us bring the node back up on the same port with the same flags.
+	// Linux-only (/proc).
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
 		u.t.Fatalf("failed to read cmdline of node %d: %v", index, err)
 	}
 
+	// /proc/<pid>/cmdline is NUL-separated with a trailing NUL.
 	args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
 	if len(args) == 0 {
 		u.t.Fatalf("empty cmdline for node %d", index)
@@ -335,14 +342,15 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 
 	u.t.Logf("stopping node %d (pid %d, port %d) for %s", index, pid, port, downtime)
 
-	// 3. ugasi i sacekaj da oslobodi port
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		u.t.Fatalf("failed to SIGTERM node %d: %v", index, err)
 	}
 
+	// Wait for the process to actually exit; fall back to SIGKILL if it hangs.
+	// Signal 0 only checks whether the process still exists.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if err := syscall.Kill(pid, 0); err != nil { // proces vise ne postoji
+		if err := syscall.Kill(pid, 0); err != nil { // process is gone
 			break
 		}
 
@@ -356,29 +364,48 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	// The port must be released before we re-exec, otherwise the restart fails with
+	// "bind: address already in use".
 	waitPortClosed(u.t, port, 10*time.Second)
 
-	// 4. downtime - ovde syncer treba da pukne i krene da retry-uje
+	// The outage window. The syncer should be retrying against a dead RPC here.
 	time.Sleep(downtime)
 
-	// 5. pokreni ponovo, identicno
+	// Append to the same log file Start() uses, so the restarted node does not spam
+	// the test console. O_APPEND (not O_TRUNC) keeps everything logged before the outage.
+	f, err := os.OpenFile(
+		filepath.Join(u.logsDir, "ucl.log"),
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		u.t.Fatalf("failed to open ucl log file for restarted node %d: %v", index, err)
+	}
+
+	// Re-exec with the exact same argv and cwd -> same RPC port, same data dir.
+	// The node resyncs from its peers and picks up where it left off.
 	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
 	cmd.Dir = cwd
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = f
+	cmd.Stderr = f
 
 	if err := cmd.Start(); err != nil {
+		f.Close() //nolint:errcheck
+
 		u.t.Fatalf("failed to restart node %d: %v", index, err)
 	}
 
-	u.t.Cleanup(func() { _ = cmd.Process.Kill() })
+	// The restarted node is no longer a child of the UCL script, so Stop() will not
+	// reap it - clean it up here.
+	u.t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = f.Close()
+	})
 
-	// 6. cekaj da RPC prorada
 	waitPortOpen(u.t, port, 30*time.Second)
 
 	u.t.Logf("node %d back up on port %d (pid %d)", index, port, cmd.Process.Pid)
 }
 
+// waitPortClosed blocks until nothing accepts connections on the port, or the timeout expires.
 func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
 	t.Helper()
 
@@ -396,6 +423,8 @@ func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
 	t.Fatalf("port %d still open after %s", port, timeout)
 }
 
+// waitPortOpen blocks until the port accepts connections, or the timeout expires.
+// A successful dial only means the listener is up - the RPC may still be warming up.
 func waitPortOpen(t *testing.T, port int, timeout time.Duration) {
 	t.Helper()
 

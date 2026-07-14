@@ -1221,3 +1221,72 @@ func TestE2E_SyncerNodeReconnect(t *testing.T) {
 
 	time.Sleep(20 * time.Second)
 }
+
+// TestE2E_SyncerReconnectsAfterNodeOutage verifies that the syncer survives losing its
+// RPC node and recovers on its own
+func TestE2E_SyncerReconnectsAfterNodeOutage(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	testCluster := framework.NewTestCluster(
+		t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+
+	defer testCluster.Stop()
+
+	testCluster.Start()
+
+	// Baseline: the syncer is indexing normally from node 0.
+	t.Log("waiting for syncer to process up to block 5...")
+
+	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
+		t.Fatalf("baseline sync failed: %s", err.Error())
+	}
+
+	blockBeforeOutage := testCluster.DB.GetLastBlockNumber(t)
+	t.Logf("last indexed block before outage: %d", blockBeforeOutage)
+
+	// Outage: node 0 goes down for 20s and comes back on the SAME RPC endpoint.
+	// The rest of the cluster keeps producing blocks the whole time - those are
+	// exactly the blocks the syncer has to backfill.
+	testCluster.UCL.RestartNode(0, 20*time.Second)
+	t.Log("node 0 back up on the same RPC; syncer must reconnect on its own")
+
+	// A transaction after the node is back gives us a concrete target block to wait for.
+	receipt := testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000))
+	target := receipt.BlockNumber.Uint64()
+
+	t.Logf("waiting for syncer to catch up to block %d WITHOUT restart...", target)
+
+	if err := testCluster.DB.WaitForBlock(t, target, 2*time.Minute); err != nil {
+		t.Fatalf("syncer did not reconnect after node came back: %s", err.Error())
+	}
+
+	// The key assertion. WaitForBlock only checks the tip, so it would happily pass on a
+	// syncer that resumed at `latest` and left a hole where the outage was. This catches that.
+	if missing := testCluster.DB.MissingBlocks(t, blockBeforeOutage, target); len(missing) > 0 {
+		t.Fatalf("syncer skipped %d block(s) in range [%d, %d] after reconnect: %v",
+			len(missing), blockBeforeOutage, target, missing)
+	}
+
+	// Sanity check: the post-reconnect transaction made it into the DB, not just the block header.
+	tx := testCluster.DB.GetTransactionByHash(context.TODO(), t, receipt.TxHash.Hex())
+	if tx.Status != 1 {
+		t.Fatalf("tx %s indexed with non-success status", receipt.TxHash.Hex())
+	}
+
+	t.Logf("syncer reconnected and backfilled %d blocks", target-blockBeforeOutage)
+}
