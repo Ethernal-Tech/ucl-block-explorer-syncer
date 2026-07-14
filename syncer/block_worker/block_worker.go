@@ -128,7 +128,7 @@ func NewBlockWorker(
 		ctrlCh:         ctrlCh,
 		doneCh:         doneCh,
 		errCh:          errCh,
-		maxRetries:     1,
+		maxRetries:     100,
 		retryInterval:  2000,
 		pollInterval:   2000,
 	}
@@ -181,7 +181,7 @@ func (w *BlockWorker) Start() error {
 					return nil, fmt.Errorf("cannot execute RPC call: %w", err)
 				}
 
-				time.Sleep(time.Duration(w.retryInterval))
+				time.Sleep(time.Duration(w.retryInterval) * time.Millisecond)
 
 				continue
 			}

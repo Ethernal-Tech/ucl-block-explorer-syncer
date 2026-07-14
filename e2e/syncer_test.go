@@ -1188,3 +1188,36 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	t.Log("all EOA activity correctly indexed")
 }
+
+func TestE2E_SyncerNodeReconnect(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+
+	testCluster := framework.NewTestCluster(
+		t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+
+	defer testCluster.Stop()
+
+	testCluster.Start()
+
+	t.Log("waiting for syncer to process up to block 5...")
+
+	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
+		t.Fatalf("%s", err.Error())
+	}
+
+	testCluster.UCL.RestartNode(0, 20*time.Second)
+
+	time.Sleep(20 * time.Second)
+
+	testCluster.UCL.RestartNode(0, 20*time.Second)
+
+	time.Sleep(20 * time.Second)
+}

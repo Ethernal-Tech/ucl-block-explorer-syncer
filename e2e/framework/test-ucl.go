@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -294,4 +295,121 @@ func (u *UCL) TransferERC20(privateKey string, contractAddr, to common.Address, 
 	data = append(data, common.LeftPadBytes(amount.Bytes(), 32)...)
 
 	return u.sendTx(privateKey, &contractAddr, data, big.NewInt(0), 200000)
+}
+
+func (u *UCL) RestartNode(index int, downtime time.Duration) {
+	if index >= len(nodesRpcPorts) {
+		u.t.Fatalf("node index %d out of range (max %d)", index, len(nodesRpcPorts)-1)
+	}
+
+	port := nodesRpcPorts[index]
+	pattern := fmt.Sprintf("jsonrpc :%d", port)
+
+	// 1. nadji PID pre gasenja
+	out, err := exec.Command("pgrep", "-f", pattern).Output() //nolint:gosec
+	if err != nil {
+		u.t.Fatalf("node %d not running (pgrep %q): %v", index, pattern, err)
+	}
+
+	pid, err := strconv.Atoi(strings.Fields(string(out))[0])
+	if err != nil {
+		u.t.Fatalf("failed to parse pid for node %d: %v", index, err)
+	}
+
+	// 2. procitaj tacnu komandnu liniju i cwd (Linux; na macOS koristi `ps -o args= -p`)
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		u.t.Fatalf("failed to read cmdline of node %d: %v", index, err)
+	}
+
+	args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+	if len(args) == 0 {
+		u.t.Fatalf("empty cmdline for node %d", index)
+	}
+
+	cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+	if err != nil {
+		u.t.Logf("failed to read cwd of node %d, using test cwd: %v", index, err)
+		cwd = ""
+	}
+
+	u.t.Logf("stopping node %d (pid %d, port %d) for %s", index, pid, port, downtime)
+
+	// 3. ugasi i sacekaj da oslobodi port
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		u.t.Fatalf("failed to SIGTERM node %d: %v", index, err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := syscall.Kill(pid, 0); err != nil { // proces vise ne postoji
+			break
+		}
+
+		if time.Now().After(deadline) {
+			u.t.Logf("node %d did not exit on SIGTERM, sending SIGKILL", index)
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	waitPortClosed(u.t, port, 10*time.Second)
+
+	// 4. downtime - ovde syncer treba da pukne i krene da retry-uje
+	time.Sleep(downtime)
+
+	// 5. pokreni ponovo, identicno
+	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
+	cmd.Dir = cwd
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		u.t.Fatalf("failed to restart node %d: %v", index, err)
+	}
+
+	u.t.Cleanup(func() { _ = cmd.Process.Kill() })
+
+	// 6. cekaj da RPC prorada
+	waitPortOpen(u.t, port, 30*time.Second)
+
+	u.t.Logf("node %d back up on port %d (pid %d)", index, port, cmd.Process.Pid)
+}
+
+func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		if err != nil {
+			return
+		}
+
+		_ = conn.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("port %d still open after %s", port, timeout)
+}
+
+func waitPortOpen(t *testing.T, port int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+
+			return
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	t.Fatalf("port %d did not open within %s", port, timeout)
 }

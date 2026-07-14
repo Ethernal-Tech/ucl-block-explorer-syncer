@@ -395,7 +395,7 @@ func NewSyncer(
 	syncer := &Syncer{
 		rpcURL:                      rpcURL,
 		storage:                     storage,
-		maxRetries:                  1,
+		maxRetries:                  100,
 		retryInterval:               2000,
 		batchSize:                   1,
 		maxTxWorkers:                1,

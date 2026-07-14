@@ -126,7 +126,7 @@ func NewTxWorker(
 		doneCh:        doneCh,
 		jobCh:         jobCh,
 		errCh:         errCh,
-		maxRetries:    1,
+		maxRetries:    100,
 		retryInterval: 2000,
 		batchSize:     1,
 	}
@@ -271,7 +271,7 @@ func (w *TxWorker) sendBatch(batch []rpc.BatchElem) error {
 				return fmt.Errorf("cannot execute (batch) RPC call: %w", err)
 			}
 
-			time.Sleep(time.Duration(w.retryInterval))
+			time.Sleep(time.Duration(w.retryInterval) * time.Millisecond)
 
 			continue
 		}
