@@ -17,7 +17,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/metrics"
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	abstractworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/abstract_worker"
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
@@ -25,6 +24,7 @@ import (
 	txworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/tx_worker"
 	txpoolworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/txpool_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 )
 
 const emptyBlockSentinel = "notx"
@@ -237,12 +237,12 @@ type Syncer struct {
 	// [StorageHandler.InsertTransactions] documentation for more details. By default, false.
 	withTxs bool
 
-	// maxRetries is the maximum number of RPC request attempts for fetching blockchain data
-	// (blocks, transactions, and receipts) before giving up. -1 denotes indefinitely. By default,
-	// the first failure is treated as fatal.
+	// maxRetries is the maximum number of attempts to fetch (and process) a blockchain data
+	// (blocks, transactions, etc.) before giving up and shutting down the worker(s). -1 denotes
+	// indefinitely. By default, the first failure is treated as fatal.
 	maxRetries int64
 
-	// retryInterval specifies how long the syncer waits between two consecutive RPC attempts,
+	// retryInterval specifies how long the syncer waits between two consecutive retry attempts,
 	// in milliseconds. By default, 2000 milliseconds.
 	retryInterval uint64
 
@@ -395,7 +395,7 @@ func NewSyncer(
 	syncer := &Syncer{
 		rpcURL:                      rpcURL,
 		storage:                     storage,
-		maxRetries:                  100,
+		maxRetries:                  1,
 		retryInterval:               2000,
 		batchSize:                   1,
 		maxTxWorkers:                1,
@@ -1692,12 +1692,34 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 
 			var code hexutil.Bytes
 
-			if err := client.CallContext(context.TODO(),
-				&code,
-				"eth_getCode",
-				addr,
-				"latest"); err != nil {
-				return false, false, fmt.Errorf("failed to get code: %w", err)
+			for i := int64(1); ; i++ {
+				if err := client.CallContext(context.TODO(),
+					&code,
+					"eth_getCode",
+					addr,
+					"latest"); err != nil {
+					log("failed to get code: %v", err.Error())
+
+					if i == s.maxRetries {
+						log("giving up...")
+
+						return true, false, fmt.Errorf("failed to get code: %w", err)
+					}
+
+					select {
+					case <-s.shutDownCh:
+						return true, false, nil
+					case <-time.After(time.Duration(s.retryInterval) * time.Millisecond):
+						select {
+						case <-s.shutDownCh:
+							return true, false, nil
+						default:
+							continue
+						}
+					}
+				}
+
+				break
 			}
 
 			if len(code) == 0 {

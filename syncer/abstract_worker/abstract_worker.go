@@ -41,7 +41,8 @@ type AbstractWorker struct {
 	// only after all previous signals are processed). After receiving it, the worker moves
 	// to the next iteration, ignoring any signals currently available in the buffer. Only if
 	// processFn in the next iteration completes without error the next pair of pause-resume
-	// signals is processed.
+	// signals is processed. Note that control signals are only checked between iterations,
+	// i.e. between two consecutive calls to [AbstractWorker.processFn].
 	ctrlCh <-chan struct{}
 
 	// doneCh is the channel on which the worker sends a signal when it has finished shutting
