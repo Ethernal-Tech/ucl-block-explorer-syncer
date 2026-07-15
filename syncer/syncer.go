@@ -14,8 +14,10 @@ import (
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/metrics"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	abstractworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/abstract_worker"
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
@@ -300,6 +302,16 @@ type Syncer struct {
 	// metricsAddr is the TCP listen address for the /metrics endpoint. Only used when metricsEnabled.
 	metricsAddr string
 
+	// tracingEnabled gates OpenTelemetry tracing: trace propagation on outbound node RPC.
+	// Enabled via [WithTracing] with a non-empty endpoint. By default, false.
+	tracingEnabled bool
+
+	// tracingEndpoint is the OTLP trace collector endpoint. Only used when tracingEnabled.
+	tracingEndpoint string
+
+	// tracerShutdown flushes and stops the tracer provider on shutdown. nil when tracing is off.
+	tracerShutdown func(context.Context) error
+
 	// Internal fields used by the syncer:
 
 	// m, s, and l form an internal block queue used to pass blocks from the block worker, via
@@ -413,7 +425,7 @@ func NewSyncer(
 
 	// Block worker handle construction.
 	{
-		client, err := rpc.Dial(rpcURL)
+		client, err := syncer.dialRPC(rpcURL)
 		if err != nil {
 			return nil, fmt.Errorf("cannot establish RPC connection for block worker: %w", err)
 		}
@@ -441,7 +453,7 @@ func NewSyncer(
 			Id  uint64
 		}, syncer.maxTxWorkers)
 
-		client, err := rpc.Dial(rpcURL)
+		client, err := syncer.dialRPC(rpcURL)
 		if err != nil {
 			return nil, fmt.Errorf("cannot establish RPC connection for tx worker(s): %w", err)
 		}
@@ -496,7 +508,7 @@ func NewSyncer(
 	// [SCHEDULED FOR REMOVAL]
 	// Transaction pool worker handle construction.
 	if syncer.syncTxPool {
-		client, err := rpc.Dial(rpcURL)
+		client, err := syncer.dialRPC(rpcURL)
 		if err != nil {
 			return nil, fmt.Errorf("cannot establish RPC connection for tx pool worker: %w", err)
 		}
@@ -531,6 +543,26 @@ func (s *Syncer) Start() error {
 	if s.storage == nil {
 		return fmt.Errorf(
 			"method must be invoked on an instance initialized through [NewTxWorker]")
+	}
+
+	// Set up tracing before the workers start making RPC calls, so their outbound
+	// requests carry the W3C traceparent from the very first block.
+	if s.tracingEnabled {
+		shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint)
+		if err != nil {
+			s.log("tracing init failed: %v", err)
+		} else {
+			s.tracerShutdown = shutdown
+
+			defer func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				if err := shutdown(ctx); err != nil {
+					s.log("tracer shutdown error: %v", err)
+				}
+			}()
+		}
 	}
 
 	if err := s.bwHandle.bw.Start(); err != nil {
@@ -1095,6 +1127,18 @@ func (s *Syncer) Start() error {
 	return nil
 }
 
+// dialRPC opens an RPC client to the node. When tracing is enabled it wraps the HTTP transport
+// with otelhttp so outbound requests carry the active span's W3C traceparent.
+func (s *Syncer) dialRPC(rpcURL string) (*rpc.Client, error) {
+	if !s.tracingEnabled {
+		return rpc.Dial(rpcURL)
+	}
+
+	httpClient := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
+
+	return rpc.DialOptions(context.Background(), rpcURL, rpc.WithHTTPClient(httpClient))
+}
+
 // startMetricsServer serves the Prometheus metrics at /metrics on [Syncer.metricsAddr]. The
 // returned server is closed by [Syncer.Start] on shutdown.
 func (s *Syncer) startMetricsServer() *http.Server {
@@ -1148,7 +1192,7 @@ func (s *Syncer) sampleMetrics() {
 		metrics.LastIndexedBlock.Set(float64(lastIndexed))
 
 		if headClient == nil {
-			client, err := rpc.Dial(s.rpcURL)
+			client, err := s.dialRPC(s.rpcURL)
 			if err != nil {
 				s.log("metrics sampler: cannot dial rpc for chain head: %v", err)
 
@@ -1598,7 +1642,7 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 		Id  string
 	}, 1)
 
-	client, err := rpc.Dial(s.rpcURL)
+	client, err := s.dialRPC(s.rpcURL)
 	if err != nil {
 		return nil, fmt.Errorf("cannot establish RPC connection for eoa activity worker: %w", err)
 	}

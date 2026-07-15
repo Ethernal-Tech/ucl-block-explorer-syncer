@@ -5,7 +5,12 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/rpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const tracerName = "ucl-block-explorer-syncer/rpc"
 
 // InstrumentedRPCClient wraps *rpc.Client and records the duration of every
 // CallContext / BatchCallContext invocation into [NodeRPCDuration], labelled by
@@ -15,7 +20,6 @@ type InstrumentedRPCClient struct {
 	*rpc.Client
 }
 
-// NewInstrumentedRPCClient wraps c so its calls are timed.
 func NewInstrumentedRPCClient(c *rpc.Client) *InstrumentedRPCClient {
 	return &InstrumentedRPCClient{Client: c}
 }
@@ -26,19 +30,32 @@ func (c *InstrumentedRPCClient) CallContext(
 	method string,
 	args ...interface{},
 ) error {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, method, trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+
 	start := time.Now().UTC()
 	err := c.Client.CallContext(ctx, result, method, args...)
 	NodeRPCDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
 
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+	}
+
 	return err
 }
 
-// BatchCallContext times a batch JSON-RPC call under the "batch" label.
 func (c *InstrumentedRPCClient) BatchCallContext(ctx context.Context, b []rpc.BatchElem) error {
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "batch", trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+
 	start := time.Now().UTC()
 	err := c.Client.BatchCallContext(ctx, b)
 
 	NodeRPCDuration.WithLabelValues("batch").Observe(time.Since(start).Seconds())
+
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+	}
 
 	return err
 }

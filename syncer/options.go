@@ -158,6 +158,17 @@ func WithMetrics(addr string) SyncerOption {
 	}
 }
 
+// WithTracing enables OpenTelemetry tracing, exporting spans over OTLP/gRPC to the given
+// endpoint (e.g. "http://localhost:4317"). An empty endpoint disables tracing.
+func WithTracing(endpoint string) SyncerOption {
+	return func(s *Syncer) error {
+		s.tracingEnabled = endpoint != ""
+		s.tracingEndpoint = endpoint
+
+		return nil
+	}
+}
+
 // WithErc20Stats configures the syncer to also track statistics for various ERC-20 tokens using
 // the provided backend. For additional information on the underlying aggregation process, see
 // the [Erc20Backend] interface documentation.
