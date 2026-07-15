@@ -75,11 +75,12 @@ type BlockWorker struct {
 	// default, false.
 	tipOnly bool
 
-	// maxRetries is the maximum number of RPC request attempts for fetching a block before giving
-	// up. -1 denotes indefinitely. By default, the first failure is treated as fatal.
+	// maxRetries is the maximum number of attempts to fetch (and parse) a block before giving
+	// up and shutting down the worker. -1 denotes indefinitely. By default, the first failure
+	// is treated as fatal.
 	maxRetries int64
 
-	// retryInterval specifies how long the worker waits between two consecutive RPC attempts.
+	// retryInterval specifies how long the worker waits between two consecutive retry attempts.
 	// By default, 2000 milliseconds.
 	retryInterval uint64
 
@@ -128,7 +129,7 @@ func NewBlockWorker(
 		ctrlCh:         ctrlCh,
 		doneCh:         doneCh,
 		errCh:          errCh,
-		maxRetries:     100,
+		maxRetries:     1,
 		retryInterval:  2000,
 		pollInterval:   2000,
 	}
@@ -154,47 +155,51 @@ func (w *BlockWorker) Start() error {
 			"method must be invoked on an instance initialized through [NewBlockWorker]")
 	}
 
-	currentBlock := w.startBlock
+	currentBlockNumber := w.startBlock
 
-	// fetchFn fetches a single block by number via RPC, retrying on failure. The following
-	// returns are possible:
-	// 1. nil, error - an error occurred, processing should stop.
-	// 2. block, nil - a block was fetched successfully and should be processed.
-	// 3. nil, nil  - the block has not been mined yet; we are at the tip of the chain.
-	fetchFn := func(number uint64) (*types.Block, error) {
-		var raw json.RawMessage
-
-		for i := int64(1); ; i++ {
-			if err := w.client.CallContext(
-				context.TODO(),
-				&raw,
-				"eth_getBlockByNumber",
-				hexutil.EncodeBig(new(big.Int).SetUint64(number)),
-				w.withTxs,
-			); err != nil {
-				w.log("RPC call failed: %v", err)
-
-				// If [BlockWorker.maxRetries] is -1, retry indefinitely.
-				if i == w.maxRetries {
-					w.log("giving up...")
-
-					return nil, fmt.Errorf("cannot execute RPC call: %w", err)
+	// waitFn waits for the given interval while remaining responsive to control signals
+	// from ctrlCh. Returns true if the block worker should shut down (ctrlCh closed),
+	// false otherwise.
+	waitFn := func(interval time.Duration) bool {
+		if interval == 0 {
+			select {
+			case _, ok := <-w.ctrlCh:
+				if !ok {
+					return true
 				}
 
-				time.Sleep(time.Duration(w.retryInterval) * time.Millisecond)
+				w.log("paused")
 
-				continue
+				_, ok = <-w.ctrlCh
+				if !ok {
+					return true
+				}
+
+				w.log("resume")
+			default:
 			}
 
-			break
+			return false
 		}
 
-		block, err := ParseRawBlock(raw)
-		if err != nil {
-			return nil, fmt.Errorf("cannot parse block %d: %w", number, err)
+		select {
+		case _, ok := <-w.ctrlCh:
+			if !ok {
+				return true
+			}
+
+			w.log("paused")
+
+			_, ok = <-w.ctrlCh
+			if !ok {
+				return true
+			}
+
+			w.log("resume")
+		case <-time.After(interval):
 		}
 
-		return block, nil
+		return false
 	}
 
 	go func() {
@@ -211,60 +216,97 @@ func (w *BlockWorker) Start() error {
 
 	break_for:
 		for {
-			// Check if a stop signal has been received. A second receive on ctrlCh
-			// waits for a resume signal; if the channel is closed, the loop exits.
-			select {
-			case <-w.ctrlCh:
-				w.log("stop")
+			w.log("fetching block %v", currentBlockNumber)
 
-				_, ok := <-w.ctrlCh
-				if !ok {
-					break break_for
+			var block *types.Block
+
+			interval := time.Duration(w.retryInterval) * time.Millisecond
+
+			for i := int64(1); ; i++ {
+				var raw json.RawMessage
+
+				if err := w.client.CallContext(
+					context.TODO(),
+					&raw,
+					"eth_getBlockByNumber",
+					hexutil.EncodeBig(new(big.Int).SetUint64(currentBlockNumber)),
+					w.withTxs,
+				); err != nil {
+					w.log("RPC call failed: %v", err)
+
+					// If [BlockWorker.maxRetries] is -1, retry indefinitely.
+					if i == w.maxRetries {
+						w.log("giving up...")
+
+						w.shutDown(fmt.Errorf("cannot execute RPC call: %w", err))
+
+						return
+					}
+
+					if waitFn(interval) {
+						break break_for
+					}
+
+					continue
 				}
 
-				w.log("resume")
-			default:
+				parsedBlock, err := ParseRawBlock(raw)
+				if err != nil {
+					w.log("cannot parse block: %v", err)
+
+					// If [BlockWorker.maxRetries] is -1, retry indefinitely.
+					if i == w.maxRetries {
+						w.log("giving up...")
+
+						w.shutDown(fmt.Errorf("cannot parse block %d: %w", currentBlockNumber, err))
+
+						return
+					}
+
+					if waitFn(interval) {
+						break break_for
+					}
+
+					continue
+				}
+
+				block = parsedBlock
+
+				break
 			}
 
-			w.log("fetching block %v", currentBlock)
+			interval = time.Duration(w.pollInterval) * time.Millisecond
 
-			block, err := fetchFn(currentBlock)
-
-			switch {
-			case err != nil:
-				w.shutDown(err)
-
-				return
-			case block != nil:
-				w.log("block %v has %v txs", currentBlock, len(block.Transactions))
+			// Block is nil when we reach the tip of the chain.
+			if block != nil {
+				w.log("block %v has %v txs", currentBlockNumber, len(block.Transactions))
 
 				if err := w.processBlockFn(block); err != nil {
-					w.shutDown(fmt.Errorf("cannot process block %d: %w", currentBlock, err))
+					w.shutDown(fmt.Errorf("cannot process block %d: %w", currentBlockNumber, err))
 
 					return
 				}
 
-				w.log("block %v processed", currentBlock)
+				w.log("block %v processed", currentBlockNumber)
 
-				if w.lastBlock != nil && currentBlock == *w.lastBlock {
+				if w.lastBlock != nil && currentBlockNumber == *w.lastBlock {
 					w.log("all blocks processed")
 
 					break break_for
 				}
 
-				currentBlock++
+				currentBlockNumber++
 
-				// When tipOnly is true, we run without delay until we reach the tip, after
-				// which pollInterval takes effect (handled in the default case).
-				if !w.tipOnly {
-					time.Sleep(time.Duration(w.pollInterval) * time.Millisecond)
+				// When tipOnly is true, we run without delay until we reach the tip of the
+				// chain. Once there, block will be nil and pollInterval will take effect on
+				// the next iteration.
+				if w.tipOnly {
+					interval = time.Duration(0)
 				}
+			}
 
-			default:
-				// TODO: handle control signals from ctrlCh during sleep
-
-				// No block available yet (tip of the chain). Wait before trying again.
-				time.Sleep(time.Duration(w.pollInterval) * time.Millisecond)
+			if waitFn(interval) {
+				break break_for
 			}
 		}
 
