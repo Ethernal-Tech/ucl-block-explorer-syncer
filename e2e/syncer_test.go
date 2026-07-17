@@ -1413,6 +1413,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 	)
 	for _, a := range accounts {
 		wg.Add(1)
+
 		go func(a *loadAccount) {
 			defer wg.Done()
 
@@ -1531,6 +1532,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 		tx := testCluster.DB.GetTransactionByHash(context.TODO(), t, h.Hex())
 		if tx == nil {
 			missingInDB = append(missingInDB, h)
+
 			continue
 		}
 

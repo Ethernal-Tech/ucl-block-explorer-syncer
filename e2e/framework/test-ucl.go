@@ -349,14 +349,14 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 
 	// Wait for the process to actually exit; fall back to SIGKILL if it hangs.
 	// Signal 0 only checks whether the process still exists.
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().UTC().Add(10 * time.Second)
 
 	for {
 		if err := syscall.Kill(pid, 0); err != nil { // process is gone
 			break
 		}
 
-		if time.Now().After(deadline) {
+		if time.Now().UTC().After(deadline) {
 			u.t.Logf("node %d did not exit on SIGTERM, sending SIGKILL", index)
 
 			_ = syscall.Kill(pid, syscall.SIGKILL)
@@ -412,8 +412,8 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
 		if err != nil {
 			return
