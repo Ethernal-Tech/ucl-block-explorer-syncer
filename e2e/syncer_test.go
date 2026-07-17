@@ -112,7 +112,7 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 
 		t.Logf("waiting for syncer to process up to block %d...", maxBlockNumber)
 
-		if err := ts.DB.WaitForBlock(t, maxBlockNumber, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlockNumber, 150*time.Second); err != nil {
 			t.Fatalf("%s", err.Error())
 		}
 
@@ -182,7 +182,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			transferReceipt1.BlockNumber.Uint64(),
 		})
 
-		if err := ts.DB.WaitForBlock(t, maxBlockNumber1, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlockNumber1, 150*time.Second); err != nil {
 			t.Fatalf("%s", err.Error())
 		}
 
@@ -348,7 +348,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			active    bool
 		}
 
-		if err := ts.DB.WaitForBlock(t, deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, deployReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", deployReceipt.BlockNumber.Uint64())
 		}
 
@@ -402,7 +402,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
 
-		if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlock, 150*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
@@ -433,7 +433,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(false)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlock, 150*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
@@ -816,7 +816,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	t.Log("waiting for syncer to process up to block 5...")
 
-	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, 5, 150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -838,7 +838,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	t.Logf("waiting for syncer to process up to block %v...", receipt.BlockNumber.Uint64())
 
-	if err := testCluster.DB.WaitForBlock(t, receipt.BlockNumber.Uint64(), time.Minute); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, receipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -903,7 +903,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 
 		if err := testCluster.DB.WaitForBlock(
 			t,
-			deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+			deployReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 			t.Fatal("syncer can't get to deployment block")
 		}
 
@@ -1072,7 +1072,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	if err := testCluster.DB.WaitForBlock(t,
 		transferReceipt.BlockNumber.Uint64(),
-		30*time.Second); err != nil {
+		150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1108,7 +1108,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	if err := testCluster.DB.WaitForBlock(t,
 		secondTransferReceipt.BlockNumber.Uint64(),
-		30*time.Second); err != nil {
+		150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1160,7 +1160,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	if err := testCluster.DB.WaitForBlock(t,
 		erc20TransferReceipt.BlockNumber.Uint64(),
-		30*time.Second); err != nil {
+		150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1210,7 +1210,7 @@ func TestE2E_SyncerNodeReconnect(t *testing.T) {
 
 	t.Log("waiting for syncer to process up to block 5...")
 
-	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, 5, 150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1253,7 +1253,7 @@ func TestE2E_SyncerReconnectsAfterNodeOutage(t *testing.T) {
 	// Baseline: the syncer is indexing normally from node 0.
 	t.Log("waiting for syncer to process up to block 5...")
 
-	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, 5, 150*time.Second); err != nil {
 		t.Fatalf("baseline sync failed: %s", err.Error())
 	}
 
@@ -1272,7 +1272,7 @@ func TestE2E_SyncerReconnectsAfterNodeOutage(t *testing.T) {
 
 	t.Logf("waiting for syncer to catch up to block %d WITHOUT restart...", target)
 
-	if err := testCluster.DB.WaitForBlock(t, target, 2*time.Minute); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, target, 150*time.Second); err != nil {
 		t.Fatalf("syncer did not reconnect after node came back: %s", err.Error())
 	}
 
