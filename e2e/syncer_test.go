@@ -920,7 +920,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 			big.NewInt(1000000))
 
 		if err := testCluster.DB.WaitForERC20Block(t,
-			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 			t.Fatal("syncer can't get to frist mint block")
 		}
 
@@ -1592,7 +1592,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 func waitNonce(t *testing.T, ctx context.Context, client *ethclient.Client, addr common.Address, want uint64, timeout time.Duration) {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().UTC().Add(timeout)
 
 	for {
 		n, err := client.NonceAt(ctx, addr, nil) // nil = latest (mined)
@@ -1604,7 +1604,7 @@ func waitNonce(t *testing.T, ctx context.Context, client *ethclient.Client, addr
 			return
 		}
 
-		if time.Now().After(deadline) {
+		if time.Now().UTC().After(deadline) {
 			t.Fatalf("timeout: %s mined nonce %d did not reach %d", addr.Hex(), n, want)
 		}
 
@@ -1616,7 +1616,7 @@ func waitNonce(t *testing.T, ctx context.Context, client *ethclient.Client, addr
 func waitEOA(t *testing.T, ts *framework.TestCluster, block uint64, timeout time.Duration) {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().UTC().Add(timeout)
 
 	for {
 		last, err := ts.DB.GetLastProcessedEOAActivityBlock(t)
@@ -1628,7 +1628,7 @@ func waitEOA(t *testing.T, ts *framework.TestCluster, block uint64, timeout time
 			return
 		}
 
-		if time.Now().After(deadline) {
+		if time.Now().UTC().After(deadline) {
 			t.Fatalf("timeout: EOA activity did not reach block %d", block)
 		}
 

@@ -432,8 +432,8 @@ func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
 func waitPortOpen(t *testing.T, port int, timeout time.Duration) {
 	t.Helper()
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
