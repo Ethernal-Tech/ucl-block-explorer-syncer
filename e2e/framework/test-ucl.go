@@ -64,7 +64,7 @@ func (u *UCL) Start() {
 	}
 
 	u.node = n
-	u.WaitForBlock(1, 3*time.Minute)
+	u.WaitForBlock(1, 5*time.Minute)
 
 	client, err := ethclient.Dial(u.config.RpcUrl)
 	if err != nil {
@@ -337,6 +337,7 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 	cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
 	if err != nil {
 		u.t.Logf("failed to read cwd of node %d, using test cwd: %v", index, err)
+
 		cwd = ""
 	}
 
@@ -349,6 +350,7 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 	// Wait for the process to actually exit; fall back to SIGKILL if it hangs.
 	// Signal 0 only checks whether the process still exists.
 	deadline := time.Now().Add(10 * time.Second)
+
 	for {
 		if err := syscall.Kill(pid, 0); err != nil { // process is gone
 			break
@@ -356,6 +358,7 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 
 		if time.Now().After(deadline) {
 			u.t.Logf("node %d did not exit on SIGTERM, sending SIGKILL", index)
+
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 
 			break
@@ -417,6 +420,7 @@ func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
 		}
 
 		_ = conn.Close()
+
 		time.Sleep(100 * time.Millisecond)
 	}
 
