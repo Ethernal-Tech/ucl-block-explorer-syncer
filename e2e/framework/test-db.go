@@ -832,3 +832,25 @@ func (d *DB) MissingBlocks(t *testing.T, from, to uint64) []uint64 {
 
 	return missing
 }
+
+// WaitForEOABlock blocks until the syncer's EOA-activity processing has covered
+// the given block, or the timeout expires. Mirrors WaitForBlock/WaitForERC20Block.
+func (d *DB) WaitForEOABlock(t *testing.T, block uint64, timeout time.Duration) error {
+	t.Helper()
+
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		last, err := d.GetLastProcessedEOAActivityBlock(t)
+		if err != nil {
+			return err
+		}
+
+		if last != nil && *last > block {
+			return nil
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	return fmt.Errorf("timeout: eoa activity did not reach block %d within %s", block, timeout)
+}

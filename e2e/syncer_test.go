@@ -1397,7 +1397,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 	// Sequential funder nonces => mined nonce reaching this means all fan-out mined
 	t.Log("waiting for fan-out funding to be mined...")
 
-	waitNonce(t, ctx, client, funderAddr, fanOutStart+numAccounts, 60*time.Second)
+	testCluster.UCL.WaitForNonce(funderAddr, fanOutStart+numAccounts, 60*time.Second)
 
 	if err := testCluster.DB.WaitForBlock(t, 3, 30*time.Second); err != nil {
 		t.Fatalf("baseline sync failed: %s", err.Error())
@@ -1468,7 +1468,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 	t.Log("waiting for the flood to fully mine...")
 
 	for _, a := range accounts {
-		waitNonce(t, ctx, client, a.addr, a.nonce, 2*time.Minute)
+		testCluster.UCL.WaitForNonce(a.addr, a.nonce, 2*time.Minute)
 	}
 
 	target, err := client.BlockNumber(ctx)
@@ -1550,7 +1550,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 		t.Fatalf("%d/%d on-chain tx missing from DB, e.g. %v", len(missingInDB), len(onChain), sample)
 	}
 
-	waitEOA(t, testCluster, target, 2*time.Minute)
+	testCluster.DB.WaitForEOABlock(t, target, 2*time.Minute)
 
 	actualEOA := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
 
@@ -1586,52 +1586,4 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 	}
 
 	t.Logf("syncer indexed all %d on-chain tx and matching EOA activity across the outage", len(onChain))
-}
-
-// waitNonce blocks until addr's mined nonce reaches want (or times out).
-func waitNonce(t *testing.T, ctx context.Context, client *ethclient.Client, addr common.Address, want uint64, timeout time.Duration) {
-	t.Helper()
-
-	deadline := time.Now().UTC().Add(timeout)
-
-	for {
-		n, err := client.NonceAt(ctx, addr, nil) // nil = latest (mined)
-		if err != nil {
-			t.Fatalf("failed to read nonce for %s: %v", addr.Hex(), err)
-		}
-
-		if n >= want {
-			return
-		}
-
-		if time.Now().UTC().After(deadline) {
-			t.Fatalf("timeout: %s mined nonce %d did not reach %d", addr.Hex(), n, want)
-		}
-
-		time.Sleep(time.Second)
-	}
-}
-
-// waitEOA blocks until the syncer's EOA-activity processing reaches block.
-func waitEOA(t *testing.T, ts *framework.TestCluster, block uint64, timeout time.Duration) {
-	t.Helper()
-
-	deadline := time.Now().UTC().Add(timeout)
-
-	for {
-		last, err := ts.DB.GetLastProcessedEOAActivityBlock(t)
-		if err != nil {
-			t.Fatalf("failed to read last EOA block: %v", err)
-		}
-
-		if last != nil && *last >= block {
-			return
-		}
-
-		if time.Now().UTC().After(deadline) {
-			t.Fatalf("timeout: EOA activity did not reach block %d", block)
-		}
-
-		time.Sleep(time.Second)
-	}
 }

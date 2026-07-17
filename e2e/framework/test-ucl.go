@@ -408,6 +408,27 @@ func (u *UCL) RestartNode(index int, downtime time.Duration) {
 	u.t.Logf("node %d back up on port %d (pid %d)", index, port, cmd.Process.Pid)
 }
 
+// WaitForNonce blocks until addr's mined nonce (as seen by the given client)
+// reaches want, or the timeout expires. Takes an explicit client on purpose:
+// pass a live peer when the node behind u.Client() is the one under test.
+func (u *UCL) WaitForNonce(addr common.Address, want uint64, timeout time.Duration) {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		n, err := u.client.NonceAt(context.Background(), addr, nil) // nil = latest mined
+		if err != nil {
+			u.t.Fatalf("failed to read nonce for %s: %v", addr.Hex(), err)
+		}
+
+		if n >= want {
+			return
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	u.t.Fatalf("timeout: %s mined nonce did not reach %d within %s", addr.Hex(), want, timeout)
+}
+
 // waitPortClosed blocks until nothing accepts connections on the port, or the timeout expires.
 func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
 	t.Helper()
