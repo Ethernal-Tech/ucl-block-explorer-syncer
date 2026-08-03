@@ -40,6 +40,7 @@ type ApiConfig struct {
 	Listen      string
 	Logging     bool
 	AdminSecret string
+	NodeRPC     string
 }
 
 type TestClusterConfig struct {

@@ -4,9 +4,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
+	"strings"
 
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/api_storage"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/explorer"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/httpserver/publicapi"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/jsonrpc"
 )
 
@@ -20,14 +24,21 @@ type Config struct {
 	// AdminAPISecret: if empty, POST /admin/v1/erc20/watchlist returns 404 (set ADMIN_API_SECRET or --admin-api-secret).
 	AdminAPISecret string
 	NodeRPC        string
+	// BalanceReader optionally injects a balance source for tests. When nil and NodeRPC is set,
+	// New dials the node and constructs a node-backed reader.
+	BalanceReader BalanceReader
 }
 
 // Server mirrors ucl-node2 jsonrpc.JSONRPC HTTP surface: POST / (JSON-RPC), GET /
 // (chain metadata), /ws, plus GET /health for probes (not in polygon-edge but harmless).
 type Server struct {
-	handler  *jsonrpc.ExplorerHandler
-	explorer *explorer.Explorer
-	cfg      Config
+	handler              *jsonrpc.ExplorerHandler
+	explorer             *explorer.Explorer
+	cfg                  Config
+	balanceReader        BalanceReader
+	getBlockList         func(*api_storage.BlockListRequest) (interface{}, error)
+	getTransactionByHash func(string) (*api_storage.TransactionListResponse, error)
+	getTokenTransfers    func(api_storage.TokenTransfersRequest) (*api_storage.TokenTransfersResponse, error)
 }
 
 // New creates the HTTP handler bundle. cfg supplies name/chain_id/version for GET / like polygon-edge.
@@ -36,19 +47,37 @@ func New(ex *explorer.Explorer, cfg Config) *Server {
 		cfg.Version = "0.0.1"
 	}
 
-	return &Server{
+	s := &Server{
 		explorer: ex,
 		cfg:      cfg,
 		handler: &jsonrpc.ExplorerHandler{
 			Explorer: ex,
 		},
+		balanceReader: cfg.BalanceReader,
 	}
+
+	if s.balanceReader == nil && strings.TrimSpace(cfg.NodeRPC) != "" {
+		reader, err := NewNodeBalanceReader(cfg.NodeRPC)
+		if err != nil {
+			log.Printf("httpserver: failed to dial node RPC for balances: %v", err)
+		} else {
+			s.balanceReader = reader
+		}
+	}
+
+	return s
 }
 
 // Handler returns the root http.Handler (polygon-edge: / and /ws; plus GET /health).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Public /api/v1 routes from OpenAPI (oapi-codegen). Independent of DB/admin auth.
+	_ = publicapi.HandlerWithOptions(s, publicapi.StdHTTPServerOptions{
+		BaseRouter:       mux,
+		ErrorHandlerFunc: handlePublicAPIParamError,
+	})
 
 	if s.cfg.DB != nil {
 		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.handleAdminErc20Watchlist)

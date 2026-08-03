@@ -51,6 +51,10 @@ func (a *API) Start() {
 		args = append(args, "--admin-api-secret", a.config.AdminSecret)
 	}
 
+	if a.config.NodeRPC != "" {
+		args = append(args, "--node-rpc", a.config.NodeRPC)
+	}
+
 	n, err := newNode("go", args, f, "..")
 	if err != nil {
 		a.t.Fatalf("failed to start api: %v", err)

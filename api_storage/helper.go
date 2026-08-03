@@ -32,6 +32,14 @@ func clampErc20PageSize(ps int) int {
 	return ps
 }
 
+func clampTokenTransfersPageSize(ps int) int {
+	if ps <= 0 || ps > 100 {
+		return 50
+	}
+
+	return ps
+}
+
 func paginationOffset(page, pageSize int) int {
 	return (page - 1) * pageSize
 }
