@@ -43,6 +43,20 @@ test-e2e: check-go
 benchmark-test: check-go
 	go test -bench=. -run=^$ `go list ./... | grep -v /e2e`
 
+# Pin oapi-codegen so CI/local generation stays reproducible.
+OAPI_CODEGEN_VERSION ?= v2.4.1
+OPENAPI_SPEC ?= docs/openapi.yaml
+OAPI_CODEGEN_CONFIG ?= docs/oapi-codegen.yaml
+
+.PHONY: generate-public-api
+generate-public-api: check-go
+	@test -f $(OPENAPI_SPEC) || (echo "$(OPENAPI_SPEC) not found"; exit 1)
+	@test -f $(OAPI_CODEGEN_CONFIG) || (echo "$(OAPI_CODEGEN_CONFIG) not found"; exit 1)
+	@mkdir -p httpserver/publicapi
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) \
+		-config $(OAPI_CODEGEN_CONFIG) \
+		$(OPENAPI_SPEC)
+
 .PHONY: help
 help:
 	@echo "Available targets:"
@@ -52,9 +66,8 @@ help:
 	@printf "  %-35s - %s\n" "test-integration" "Run integration tests"
 	@printf "  %-35s - %s\n" "test-e2e" "Run E2E tests"
 	@printf "  %-35s - %s\n" "benchmark-test" "Run benchmark tests"
+	@printf "  %-35s - %s\n" "generate-public-api" "Generate public /api/v1 boilerplate from docs/openapi.yaml (oapi-codegen)"
 	@printf "  %-35s - %s\n" "check-git" "Check if git is installed"
 	@printf "  %-35s - %s\n" "check-go" "Check if Go is installed"
 	@printf "  %-35s - %s\n" "check-lint" "Check if golangci-lint is installed"
 	@printf "  %-35s - %s\n" "help" "Show this help message"
-	
-	
