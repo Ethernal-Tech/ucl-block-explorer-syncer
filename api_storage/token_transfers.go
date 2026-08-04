@@ -115,15 +115,14 @@ func GetTokenTransfers(req TokenTransfersRequest) (*TokenTransfersResponse, erro
 	}
 
 	transferTopic := strings.ToLower(helper.TransferTopic.Hex())
-	tokenLower := strings.ToLower(tokenAddr)
 
 	query := `
 		SELECT tx_hash, log_index, block_number, address, topics, data
 		FROM chain.transaction_logs
-		WHERE LOWER(address) = $1
+		WHERE address = $1
 		AND LOWER(topics[1]) = $2
 	`
-	args := []any{tokenLower, transferTopic}
+	args := []any{tokenAddr, transferTopic}
 	argN := 3
 
 	if fromBlock != nil {
@@ -188,9 +187,7 @@ func GetTokenTransfers(req TokenTransfersRequest) (*TokenTransfersResponse, erro
 		)
 
 		if err := rows.Scan(&txHash, &logIndex, &blockNumber, &address, &topics, &data); err != nil {
-			log.Printf("api_storage: scan token transfer: %v", err)
-
-			continue
+			return nil, fmt.Errorf("scan token transfer: %w", err)
 		}
 
 		from, to, value, ok := helper.DecodeTransferLog([]string(topics), data)
