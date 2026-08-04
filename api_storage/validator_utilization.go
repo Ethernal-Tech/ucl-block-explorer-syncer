@@ -90,9 +90,9 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 	var maxDays int
 
 	switch g {
-	case "hour":
+	case TypeHour:
 		maxDays = 60
-	case "month":
+	case TypeMonth:
 		maxDays = 365
 	default:
 		maxDays = 90
@@ -181,9 +181,9 @@ func GetValidatorCapacityStats(req ValidatorUtilizationRequest) (*ValidatorUtili
 		}
 
 		switch g {
-		case "hour":
+		case TypeHour:
 			r.BucketUtc = bucket.UTC().Format(time.RFC3339)
-		case "month":
+		case TypeMonth:
 			r.BucketUtc = bucket.UTC().Format("2006-01")
 		default:
 			r.BucketUtc = bucket.UTC().Format("2006-01-02")

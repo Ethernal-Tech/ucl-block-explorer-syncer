@@ -64,8 +64,8 @@ func (r *nodeBalanceReader) BalanceAt(
 // toBalanceBlockArg maps "latest" or a decimal block number to an eth_getBalance block argument.
 func toBalanceBlockArg(block string) (any, error) {
 	block = strings.TrimSpace(block)
-	if block == "" || strings.EqualFold(block, "latest") {
-		return "latest", nil
+	if block == "" || strings.EqualFold(block, latestBlockTag) {
+		return latestBlockTag, nil
 	}
 
 	if strings.EqualFold(block, "pending") || strings.EqualFold(block, "earliest") {

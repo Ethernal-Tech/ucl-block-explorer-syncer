@@ -128,12 +128,14 @@ func GetTokenTransfers(req TokenTransfersRequest) (*TokenTransfersResponse, erro
 
 	if fromBlock != nil {
 		query += fmt.Sprintf(" AND block_number >= $%d", argN)
+
 		args = append(args, *fromBlock)
 		argN++
 	}
 
 	if toBlock != nil {
 		query += fmt.Sprintf(" AND block_number <= $%d", argN)
+
 		args = append(args, *toBlock)
 		argN++
 	}
@@ -141,6 +143,7 @@ func GetTokenTransfers(req TokenTransfersRequest) (*TokenTransfersResponse, erro
 	if walletFilter != "" {
 		padded := strings.ToLower(common.BytesToHash(common.HexToAddress(walletFilter).Bytes()).Hex())
 		query += fmt.Sprintf(" AND (LOWER(topics[2]) = $%d OR LOWER(topics[3]) = $%d)", argN, argN)
+
 		args = append(args, padded)
 		argN++
 	}
@@ -152,6 +155,7 @@ func GetTokenTransfers(req TokenTransfersRequest) (*TokenTransfersResponse, erro
 				OR (block_number = $%d AND log_index < $%d)
 				OR (block_number = $%d AND log_index = $%d AND tx_hash < $%d)
 			)`, argN, argN, argN+1, argN, argN+1, argN+2)
+
 		args = append(args, cursor.BlockNumber, cursor.LogIndex, strings.ToLower(cursor.TxHash))
 		argN += 3
 	}
@@ -160,6 +164,7 @@ func GetTokenTransfers(req TokenTransfersRequest) (*TokenTransfersResponse, erro
 		ORDER BY block_number DESC, log_index DESC, tx_hash DESC
 		LIMIT $%d
 	`, argN)
+
 	args = append(args, req.PageSize+1)
 
 	rows, err := conn.Query(query, args...)

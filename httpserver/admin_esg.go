@@ -40,7 +40,7 @@ func (s *Server) handleAdminEsg(w http.ResponseWriter, r *http.Request) {
 
 	writeError := func(status int, msg string) {
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+		_ = json.NewEncoder(w).Encode(map[string]string{jsonErrorKey: msg})
 	}
 	getQueryParamInt := func(q url.Values, name string, def int) (int, error) {
 		s := q.Get(name)
@@ -92,7 +92,7 @@ func (s *Server) handleAdminEsg(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+		_ = json.NewEncoder(w).Encode(map[string]string{jsonErrorKey: methodNotAllowed})
 	}
 }
 

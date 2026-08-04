@@ -26,7 +26,7 @@ func TestHandleAdminValidators_NoSecret(t *testing.T) {
 func TestHandleAdminValidators_WrongToken(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret"}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut,
 		"/admin/v1/validators/0xAbC1234567890000000000000000000000000001",
@@ -43,7 +43,7 @@ func TestHandleAdminValidators_WrongToken(t *testing.T) {
 func TestHandleAdminValidators_MissingToken(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret"}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut,
 		"/admin/v1/validators/0xAbC1234567890000000000000000000000000001",
@@ -60,7 +60,7 @@ func TestHandleAdminValidators_MissingToken(t *testing.T) {
 func TestHandleAdminValidators_NoDB(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret", DB: nil}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret, DB: nil}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut,
 		"/admin/v1/validators/0xAbC1234567890000000000000000000000000001",

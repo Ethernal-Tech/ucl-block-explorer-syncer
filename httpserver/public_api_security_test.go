@@ -44,45 +44,45 @@ func TestPublicAPI_RejectsInjectionPayloads(t *testing.T) {
 		{
 			name:     "transaction hash",
 			path:     "/api/v1/transactions/" + url.PathEscape(sqlInjectionPayload),
-			wantCode: "invalid_transaction_hash",
+			wantCode: invalidTransactionHashCode,
 		},
 		{
 			name:     "oversized transaction hash",
 			path:     "/api/v1/transactions/0x" + strings.Repeat("a", 8192),
-			wantCode: "invalid_transaction_hash",
+			wantCode: invalidTransactionHashCode,
 		},
 		{
 			name:     "balance address",
 			path:     "/api/v1/addresses/" + url.PathEscape(sqlInjectionPayload) + "/balance",
-			wantCode: "invalid_address",
+			wantCode: invalidAddressCode,
 		},
 		{
 			name:     "balance block",
 			path:     "/api/v1/addresses/0x0000000000000000000000000000000000000001/balance?block=" + url.QueryEscape(sqlInjectionPayload),
-			wantCode: "invalid_block",
+			wantCode: invalidBlockCode,
 		},
 		{
 			name:     "token address",
 			path:     "/api/v1/tokens/" + url.PathEscape(sqlInjectionPayload) + "/transfers",
-			wantCode: "invalid_address",
+			wantCode: invalidAddressCode,
 		},
 		{
 			name: "transfer address filter",
 			path: "/api/v1/tokens/0x0000000000000000000000000000000000000001/transfers?address=" +
 				url.QueryEscape(sqlInjectionPayload),
-			wantCode: "invalid_address",
+			wantCode: invalidAddressCode,
 		},
 		{
 			name: "transfer from block",
 			path: "/api/v1/tokens/0x0000000000000000000000000000000000000001/transfers?fromBlock=" +
 				url.QueryEscape(sqlInjectionPayload),
-			wantCode: "invalid_block",
+			wantCode: invalidBlockCode,
 		},
 		{
 			name: "transfer to block",
 			path: "/api/v1/tokens/0x0000000000000000000000000000000000000001/transfers?toBlock=" +
 				url.QueryEscape(sqlInjectionPayload),
-			wantCode: "invalid_block",
+			wantCode: invalidBlockCode,
 		},
 		{
 			name: "transfer cursor",
@@ -125,6 +125,7 @@ func TestPublicAPI_RejectsInjectionPayloads(t *testing.T) {
 			if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 				t.Fatalf("decode error response: %v", err)
 			}
+
 			if body.Error.Code != tc.wantCode {
 				t.Fatalf("error code: got %q want %q", body.Error.Code, tc.wantCode)
 			}
@@ -136,6 +137,7 @@ func TestPublicAPI_DoesNotExposeBackendErrors(t *testing.T) {
 	t.Parallel()
 
 	const sensitive = `pq: syntax error near "secret_table"; postgres://admin:password@db/internal`
+
 	validHash := "0x" + strings.Repeat("a", 64)
 	validAddress := "0x0000000000000000000000000000000000000001"
 
@@ -208,6 +210,7 @@ func TestPublicAPI_DoesNotExposeBackendErrors(t *testing.T) {
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status: got %d want %d body=%s", rec.Code, tc.wantStatus, rec.Body.String())
 			}
+
 			if strings.Contains(rec.Body.String(), sensitive) ||
 				strings.Contains(rec.Body.String(), "secret_table") ||
 				strings.Contains(rec.Body.String(), "password") {

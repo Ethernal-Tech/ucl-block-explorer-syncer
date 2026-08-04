@@ -28,6 +28,7 @@ var _ publicapi.ServerInterface = (*Server)(nil)
 // GetBlocks implements publicapi.ServerInterface.
 func (s *Server) GetBlocks(w http.ResponseWriter, r *http.Request, params publicapi.GetBlocksParams) {
 	page := 1
+
 	if params.Page != nil {
 		if *params.Page < 1 {
 			writePublicError(w, http.StatusBadRequest, "invalid_page", "page must be a positive integer")
@@ -39,6 +40,7 @@ func (s *Server) GetBlocks(w http.ResponseWriter, r *http.Request, params public
 	}
 
 	pageSize := defaultBlocksPageSize
+
 	if params.PageSize != nil {
 		if *params.PageSize < 1 || *params.PageSize > maxBlocksPageSize {
 			writePublicError(w, http.StatusBadRequest, "invalid_page_size",
@@ -74,7 +76,7 @@ func (s *Server) GetBlocks(w http.ResponseWriter, r *http.Request, params public
 
 	out, err := getBlockList(req)
 	if err != nil {
-		writePublicError(w, http.StatusServiceUnavailable, "database_error", "failed to list blocks")
+		writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, "failed to list blocks")
 
 		return
 	}
@@ -87,7 +89,7 @@ func (s *Server) GetBlocks(w http.ResponseWriter, r *http.Request, params public
 	}
 
 	if resp.Code != "200" {
-		writePublicError(w, http.StatusServiceUnavailable, "database_error", resp.Message)
+		writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, resp.Message)
 
 		return
 	}
@@ -118,7 +120,7 @@ func (s *Server) GetTransactionByHash(
 	hash publicapi.TransactionHash,
 ) {
 	if !isValidTransactionHash(hash) {
-		writePublicError(w, http.StatusBadRequest, "invalid_transaction_hash",
+		writePublicError(w, http.StatusBadRequest, invalidTransactionHashCode,
 			"transaction hash must be a 0x-prefixed 32-byte hexadecimal value")
 
 		return
@@ -132,12 +134,12 @@ func (s *Server) GetTransactionByHash(
 	resp, err := getTransactionByHash(hash)
 	if err != nil {
 		if resp != nil && resp.Code == "400" {
-			writePublicError(w, http.StatusBadRequest, "invalid_transaction_hash", resp.Message)
+			writePublicError(w, http.StatusBadRequest, invalidTransactionHashCode, resp.Message)
 
 			return
 		}
 
-		writePublicError(w, http.StatusServiceUnavailable, "database_error", "failed to get transaction")
+		writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, "failed to get transaction")
 
 		return
 	}
@@ -149,7 +151,7 @@ func (s *Server) GetTransactionByHash(
 	}
 
 	if resp.Code != "200" {
-		writePublicError(w, http.StatusServiceUnavailable, "database_error", resp.Message)
+		writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, resp.Message)
 
 		return
 	}
@@ -178,18 +180,18 @@ func (s *Server) GetAddressBalance(
 ) {
 	normalized, err := commonHelper.NormalizeAddress(address)
 	if err != nil {
-		writePublicError(w, http.StatusBadRequest, "invalid_address", "address must be a valid hex address")
+		writePublicError(w, http.StatusBadRequest, invalidAddressCode, "address must be a valid hex address")
 
 		return
 	}
 
-	blockParam := "latest"
+	blockParam := latestBlockTag
 	if params.Block != nil && strings.TrimSpace(*params.Block) != "" {
 		blockParam = strings.TrimSpace(*params.Block)
 	}
 
 	if _, err := toBalanceBlockArg(blockParam); err != nil {
-		writePublicError(w, http.StatusBadRequest, "invalid_block",
+		writePublicError(w, http.StatusBadRequest, invalidBlockCode,
 			"block must be latest or a nonnegative decimal block number")
 
 		return
@@ -214,8 +216,8 @@ func (s *Server) GetAddressBalance(
 	}
 
 	resolvedBlock := blockParam
-	if strings.EqualFold(blockParam, "latest") {
-		resolvedBlock = "latest"
+	if strings.EqualFold(blockParam, latestBlockTag) {
+		resolvedBlock = latestBlockTag
 	}
 
 	writePublicJSON(w, http.StatusOK, publicapi.AddressBalance{
@@ -234,6 +236,7 @@ func (s *Server) GetTokenTransfers(
 	params publicapi.GetTokenTransfersParams,
 ) {
 	pageSize := defaultTransfersPageSize
+
 	if params.PageSize != nil {
 		if *params.PageSize < 1 || *params.PageSize > maxTransfersPageSize {
 			writePublicError(w, http.StatusBadRequest, "invalid_page_size",
@@ -275,18 +278,18 @@ func (s *Server) GetTokenTransfers(
 		msg := err.Error()
 		switch {
 		case strings.Contains(msg, "invalid token address"):
-			writePublicError(w, http.StatusBadRequest, "invalid_address", "tokenAddress must be a valid hex address")
+			writePublicError(w, http.StatusBadRequest, invalidAddressCode, "tokenAddress must be a valid hex address")
 		case strings.Contains(msg, "invalid address filter"):
-			writePublicError(w, http.StatusBadRequest, "invalid_address", "address must be a valid hex address")
+			writePublicError(w, http.StatusBadRequest, invalidAddressCode, "address must be a valid hex address")
 		case strings.Contains(msg, "invalid fromBlock"), strings.Contains(msg, "invalid toBlock"),
 			strings.Contains(msg, "fromBlock must be"):
-			writePublicError(w, http.StatusBadRequest, "invalid_block", msg)
+			writePublicError(w, http.StatusBadRequest, invalidBlockCode, msg)
 		case strings.Contains(msg, "invalid cursor"):
 			writePublicError(w, http.StatusBadRequest, "invalid_cursor", "cursor is malformed")
 		case api_storage.IsDBConnectionFailed(err):
-			writePublicError(w, http.StatusServiceUnavailable, "database_error", "database not configured")
+			writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, "database not configured")
 		default:
-			writePublicError(w, http.StatusServiceUnavailable, "database_error", "failed to list token transfers")
+			writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, "failed to list token transfers")
 		}
 
 		return
@@ -333,7 +336,7 @@ func writeBalanceRPCError(w http.ResponseWriter, err error) {
 
 	if strings.Contains(err.Error(), "unsupported block tag") ||
 		strings.Contains(err.Error(), "invalid block number") {
-		writePublicError(w, http.StatusBadRequest, "invalid_block",
+		writePublicError(w, http.StatusBadRequest, invalidBlockCode,
 			"block must be latest or a nonnegative decimal block number")
 
 		return
@@ -370,12 +373,12 @@ func handlePublicAPIParamError(w http.ResponseWriter, _ *http.Request, err error
 			writePublicError(w, http.StatusBadRequest, "invalid_query_parameter",
 				"onlyWithTransactions must be a boolean")
 		case "block", "fromBlock", "toBlock":
-			writePublicError(w, http.StatusBadRequest, "invalid_block",
+			writePublicError(w, http.StatusBadRequest, invalidBlockCode,
 				"block must be latest or a nonnegative decimal block number")
-		case "address", "tokenAddress":
-			writePublicError(w, http.StatusBadRequest, "invalid_address", "address must be a valid hex address")
+		case jsonAddressKey, "tokenAddress":
+			writePublicError(w, http.StatusBadRequest, invalidAddressCode, "address must be a valid hex address")
 		case "hash":
-			writePublicError(w, http.StatusBadRequest, "invalid_transaction_hash",
+			writePublicError(w, http.StatusBadRequest, invalidTransactionHashCode,
 				"transaction hash must be a 0x-prefixed 32-byte hexadecimal value")
 		case "cursor":
 			writePublicError(w, http.StatusBadRequest, "invalid_cursor", "cursor is malformed")

@@ -24,6 +24,7 @@ func TestPublicAPIStorage_RejectsSQLInjectionValues(t *testing.T) {
 	}
 
 	cursorPayload := "1|0|" + injection
+
 	cursor := base64.RawURLEncoding.EncodeToString([]byte(cursorPayload))
 	if _, err := decodeTokenTransferCursor(cursor); err == nil {
 		t.Fatal("decodeTokenTransferCursor accepted injection")

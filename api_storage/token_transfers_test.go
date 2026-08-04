@@ -22,6 +22,7 @@ func TestClampTokenTransfersPageSize(t *testing.T) {
 
 	for _, tc := range tests {
 		tc := tc
+
 		t.Run("", func(t *testing.T) {
 			t.Parallel()
 
@@ -42,6 +43,7 @@ func TestTokenTransferCursorRoundTrip(t *testing.T) {
 	}
 
 	encoded := encodeTokenTransferCursor(original)
+
 	decoded, err := decodeTokenTransferCursor(encoded)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
@@ -98,7 +100,7 @@ func TestIsValidTxHash(t *testing.T) {
 func TestGetTokenTransfers_InvalidTokenAddress(t *testing.T) {
 	t.Parallel()
 
-	_, err := GetTokenTransfers(TokenTransfersRequest{TokenAddress: "bad"})
+	_, err := GetTokenTransfers(TokenTransfersRequest{TokenAddress: testInvalidAddress})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -131,7 +133,9 @@ func TestGetTokenTransfers_InvalidBlockRange(t *testing.T) {
 
 func TestGetTokenTransfers_DBNotConfigured(t *testing.T) {
 	prev := db
+
 	t.Cleanup(func() { db = prev })
+
 	db = nil
 
 	_, err := GetTokenTransfers(TokenTransfersRequest{

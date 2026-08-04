@@ -14,7 +14,7 @@ type DBConfig struct {
 	Host       string
 	Port       string
 	User       string
-	Password   string //nolint:gosec
+	Password   string
 	Name       string
 }
 

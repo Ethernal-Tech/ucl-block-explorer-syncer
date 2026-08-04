@@ -9,6 +9,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+const (
+	transferEventTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+	testRecipientTopic = "0x000000000000000000000000742d35cc6634c0532925a3b844bc454e4438f44e"
+)
+
 func TestCreateJob(t *testing.T) {
 	t.Run("no txs", func(t *testing.T) {
 		if jobs := CreateJobs(0, 5); jobs != nil {
@@ -119,9 +124,9 @@ func TestClassifyTransfer(t *testing.T) {
 func TestDecodeTransferLog(t *testing.T) {
 	t.Run("valid ERC-20 transfer log", func(t *testing.T) {
 		topics := []string{
-			"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", // event signature
+			transferEventTopic, // event signature
 			"0x0000000000000000000000000000000000000000000000000000000000000000", // from
-			"0x000000000000000000000000742d35cc6634c0532925a3b844bc454e4438f44e", // to
+			testRecipientTopic, // to
 		}
 		data := "0x0000000000000000000000000000000000000000000000000000000000000064" // value ( 100)
 
@@ -145,7 +150,7 @@ func TestDecodeTransferLog(t *testing.T) {
 
 	t.Run("too few topics for ERC-20 transfer event", func(t *testing.T) {
 		topics := []string{
-			"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+			transferEventTopic,
 			"0x0000000000000000000000000000000000000000000000000000000000000000",
 		}
 		data := "0x0000000000000000000000000000000000000000000000000000000000000064"
@@ -159,7 +164,7 @@ func TestDecodeTransferLog(t *testing.T) {
 		topics := []string{
 			"0x0000000000000000000000000000000000000000000000000000000000000000",
 			"0x0000000000000000000000000000000000000000000000000000000000000000",
-			"0x000000000000000000000000742d35cc6634c0532925a3b844bc454e4438f44e",
+			testRecipientTopic,
 		}
 		data := "0x0000000000000000000000000000000000000000000000000000000000000064"
 
@@ -170,9 +175,9 @@ func TestDecodeTransferLog(t *testing.T) {
 
 	t.Run("empty data (ERC-20 transfer with value 0)", func(t *testing.T) {
 		topics := []string{
-			"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+			transferEventTopic,
 			"0x0000000000000000000000000000000000000000000000000000000000000000",
-			"0x000000000000000000000000742d35cc6634c0532925a3b844bc454e4438f44e",
+			testRecipientTopic,
 		}
 
 		data := []string{"", "0x"}
@@ -191,9 +196,9 @@ func TestDecodeTransferLog(t *testing.T) {
 
 	t.Run("invalid data", func(t *testing.T) {
 		topics := []string{
-			"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+			transferEventTopic,
 			"0x0000000000000000000000000000000000000000000000000000000000000000",
-			"0x000000000000000000000000742d35cc6634c0532925a3b844bc454e4438f44e",
+			testRecipientTopic,
 		}
 
 		if _, _, _, ok := DecodeTransferLog(topics, "0xSMTH"); ok {

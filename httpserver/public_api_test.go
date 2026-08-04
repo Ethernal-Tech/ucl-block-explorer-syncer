@@ -49,10 +49,10 @@ func TestPublicAPI_RoutesNotSwallowedByCatchAll(t *testing.T) {
 		wantStatus int
 		wantCode   string
 	}{
-		{"/api/v1/blocks", http.StatusServiceUnavailable, "database_error"},
-		{"/api/v1/transactions/0x" + strings.Repeat("a", 64), http.StatusServiceUnavailable, "database_error"},
+		{"/api/v1/blocks", http.StatusServiceUnavailable, databaseErrorCode},
+		{"/api/v1/transactions/0x" + strings.Repeat("a", 64), http.StatusServiceUnavailable, databaseErrorCode},
 		{"/api/v1/addresses/0x0000000000000000000000000000000000000001/balance", http.StatusOK, ""},
-		{"/api/v1/tokens/0x0000000000000000000000000000000000000001/transfers", http.StatusServiceUnavailable, "database_error"},
+		{"/api/v1/tokens/0x0000000000000000000000000000000000000001/transfers", http.StatusServiceUnavailable, databaseErrorCode},
 	}
 
 	for _, tc := range tests {
@@ -118,7 +118,7 @@ func TestGetTransactionByHash_InvalidHash(t *testing.T) {
 				t.Fatalf("decode: %v", err)
 			}
 
-			if body.Error.Code != "invalid_transaction_hash" {
+			if body.Error.Code != invalidTransactionHashCode {
 				t.Fatalf("code: got %q", body.Error.Code)
 			}
 		})
@@ -142,9 +142,10 @@ func TestGetAddressBalance_ValidationAndNodeConfig(t *testing.T) {
 		}
 
 		var body publicAPIErrorBody
+
 		_ = json.NewDecoder(rec.Body).Decode(&body)
 
-		if body.Error.Code != "invalid_address" {
+		if body.Error.Code != invalidAddressCode {
 			t.Fatalf("code: got %q", body.Error.Code)
 		}
 	})
@@ -166,9 +167,10 @@ func TestGetAddressBalance_ValidationAndNodeConfig(t *testing.T) {
 		}
 
 		var body publicAPIErrorBody
+
 		_ = json.NewDecoder(rec.Body).Decode(&body)
 
-		if body.Error.Code != "invalid_block" {
+		if body.Error.Code != invalidBlockCode {
 			t.Fatalf("code: got %q", body.Error.Code)
 		}
 	})
@@ -189,6 +191,7 @@ func TestGetAddressBalance_ValidationAndNodeConfig(t *testing.T) {
 		}
 
 		var body publicAPIErrorBody
+
 		_ = json.NewDecoder(rec.Body).Decode(&body)
 
 		if body.Error.Code != "node_rpc_not_configured" {
@@ -224,7 +227,7 @@ func TestGetAddressBalance_ValidationAndNodeConfig(t *testing.T) {
 			t.Fatalf("balanceHex: got %q", body.BalanceHex)
 		}
 
-		if body.Block != "latest" {
+		if body.Block != latestBlockTag {
 			t.Fatalf("block: got %q", body.Block)
 		}
 	})
@@ -277,6 +280,7 @@ func TestGetBlocks_InvalidPageSize(t *testing.T) {
 	}
 
 	var body publicAPIErrorBody
+
 	_ = json.NewDecoder(rec.Body).Decode(&body)
 
 	if body.Error.Code != "invalid_page_size" {
@@ -298,9 +302,10 @@ func TestGetTokenTransfers_InvalidTokenAddress(t *testing.T) {
 	}
 
 	var body publicAPIErrorBody
+
 	_ = json.NewDecoder(rec.Body).Decode(&body)
 
-	if body.Error.Code != "invalid_address" {
+	if body.Error.Code != invalidAddressCode {
 		t.Fatalf("code: got %q", body.Error.Code)
 	}
 }
@@ -313,9 +318,9 @@ func TestToBalanceBlockArg(t *testing.T) {
 		want    any
 		wantErr bool
 	}{
-		{"", "latest", false},
-		{"latest", "latest", false},
-		{"LATEST", "latest", false},
+		{"", latestBlockTag, false},
+		{latestBlockTag, latestBlockTag, false},
+		{"LATEST", latestBlockTag, false},
 		{"0", "0x0", false},
 		{"255", "0xff", false},
 		{"pending", nil, true},
