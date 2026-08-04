@@ -921,7 +921,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 
 		if err := testCluster.DB.WaitForERC20Block(t,
 			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
-			t.Fatal("syncer can't get to frist mint block")
+			t.Fatal("syncer can't get to first mint block")
 		}
 
 		statsBefore := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO(), t)
@@ -1188,39 +1188,6 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	}
 
 	t.Log("all EOA activity correctly indexed")
-}
-
-func TestE2E_SyncerNodeReconnect(t *testing.T) {
-	pkSender, err := crypto.GenerateKey()
-	if err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
-
-	testCluster := framework.NewTestCluster(
-		t,
-		framework.WithLogging(),
-		framework.WithFullBlock(),
-		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
-
-	defer testCluster.Stop()
-
-	testCluster.Start()
-
-	t.Log("waiting for syncer to process up to block 5...")
-
-	if err := testCluster.DB.WaitForBlock(t, 5, 150*time.Second); err != nil {
-		t.Fatalf("%s", err.Error())
-	}
-
-	testCluster.UCL.RestartNode(0, 20*time.Second)
-
-	time.Sleep(20 * time.Second)
-
-	testCluster.UCL.RestartNode(0, 20*time.Second)
-
-	time.Sleep(20 * time.Second)
 }
 
 // TestE2E_SyncerReconnectsAfterNodeOutage verifies that the syncer survives losing its
