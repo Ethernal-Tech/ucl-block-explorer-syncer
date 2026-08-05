@@ -98,6 +98,12 @@ func WithAdminSecret(secret string) Option {
 	}
 }
 
+func WithAPINodeRPC(url string) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.API.NodeRPC = url
+	}
+}
+
 func WithAPI() Option {
 	return func(cfg *TestClusterConfig) {
 		cfg.WithAPI = true

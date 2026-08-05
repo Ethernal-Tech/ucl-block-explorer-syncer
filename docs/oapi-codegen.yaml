@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/v2.4.1/configuration-schema.json
+package: publicapi
+generate:
+  models: true
+  std-http-server: true
+output: httpserver/publicapi/api.gen.go
+output-options:
+  skip-prune: true

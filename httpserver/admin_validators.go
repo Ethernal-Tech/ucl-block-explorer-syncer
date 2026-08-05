@@ -104,8 +104,8 @@ func (s *Server) handleUpsertValidator(w http.ResponseWriter, r *http.Request, a
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":      true,
-		"address": address,
+		"ok":           true,
+		jsonAddressKey: address,
 	})
 }
 
@@ -124,7 +124,7 @@ func (s *Server) handleDeleteValidator(w http.ResponseWriter, address string) {
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":      true,
-		"address": address,
+		"ok":           true,
+		jsonAddressKey: address,
 	})
 }

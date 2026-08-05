@@ -34,9 +34,13 @@ var apiCommand = &cobra.Command{
   GET /      — { "name", "chain_id", "version" } (same shape as polygon-edge GET /)
   /ws        — registered; returns 501 (filters/subscriptions not implemented here)
 
-Optional: POST /admin/v1/erc20/watchlist — register tokens in chain.erc20_watchlist (Bearer ADMIN_API_SECRET).
+Public REST (no auth):
+  GET /api/v1/blocks
+  GET /api/v1/transactions/{hash}
+  GET /api/v1/addresses/{address}/balance  (requires --node-rpc)
+  GET /api/v1/tokens/{tokenAddress}/transfers
 
-There are no /api/... REST routes on the node; use POST / with explorer_* methods.`,
+Optional: POST /admin/v1/erc20/watchlist — register tokens in chain.erc20_watchlist (Bearer ADMIN_API_SECRET).`,
 	RunE: runAPI,
 }
 
@@ -56,7 +60,7 @@ func init() {
 	apiCommand.Flags().StringVar(&apiAdminAPISecret, "admin-api-secret", "",
 		"Bearer token for POST /admin/v1/erc20/watchlist (default: ADMIN_API_SECRET env)")
 	apiCommand.Flags().StringVar(&apiNodeRPC, "node-rpc", "",
-		"polygon-edge JSON-RPC URL for contract verification (e.g. http://localhost:10002)")
+		"chain JSON-RPC URL for eth_getBalance and admin ERC-20 contract verification")
 	_ = apiCommand.MarkFlagRequired("db-conn")
 }
 

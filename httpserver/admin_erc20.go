@@ -179,8 +179,8 @@ func (s *Server) handleAdminErc20Watchlist(w http.ResponseWriter, r *http.Reques
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":      true,
-		"address": tokenAddr,
+		"ok":           true,
+		jsonAddressKey: tokenAddr,
 	})
 }
 
@@ -196,7 +196,7 @@ func isContract(rpcURL, addr string) (bool, error) {
 		&code,
 		"eth_getCode",
 		addr,
-		"latest"); err != nil {
+		latestBlockTag); err != nil {
 		return false, fmt.Errorf("failed to get code: %w", err)
 	}
 
