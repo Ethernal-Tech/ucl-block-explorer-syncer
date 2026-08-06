@@ -39,6 +39,7 @@ type Server struct {
 	getBlockList         func(*api_storage.BlockListRequest) (interface{}, error)
 	getTransactionByHash func(string) (*api_storage.TransactionListResponse, error)
 	getTokenTransfers    func(api_storage.TokenTransfersRequest) (*api_storage.TokenTransfersResponse, error)
+	getDailyCommitments  func(api_storage.DailyCommitmentsRequest) (*api_storage.DailyCommitmentsResponse, error)
 }
 
 // New creates the HTTP handler bundle. cfg supplies name/chain_id/version for GET / like polygon-edge.
@@ -78,9 +79,13 @@ func (s *Server) Handler() http.Handler {
 		BaseRouter:       mux,
 		ErrorHandlerFunc: handlePublicAPIParamError,
 	})
+	mux.HandleFunc("/api/v1/data-anchor/daily-commitments", func(w http.ResponseWriter, _ *http.Request) {
+		writePublicError(w, http.StatusMethodNotAllowed, "method_not_allowed", methodNotAllowed)
+	})
 
 	if s.cfg.DB != nil {
 		mux.HandleFunc("POST /admin/v1/erc20/watchlist", s.handleAdminErc20Watchlist)
+		mux.HandleFunc("/admin/v1/data-anchor/factories", s.handleAdminDataAnchorFactories)
 		mux.HandleFunc("/admin/v1/validators/", s.handleAdminValidators)
 		mux.HandleFunc("/admin/v1/asset-issuers/", s.handleAdminAssetIssuers)
 		mux.HandleFunc("/admin/v1/asset-issuers", s.handleAdminAssetIssuers)

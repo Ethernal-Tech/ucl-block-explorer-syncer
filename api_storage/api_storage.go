@@ -22,6 +22,23 @@ const (
 	TypeHour  = "hour"
 	TypeDay   = "day"
 	TypeMonth = "month"
+
+	// isDataAnchorSQLExprEnabled marks transactions whose destination is a watched
+	// data-anchor factory or a discovered daily commitment contract.
+	// Used only when those migration-owned tables exist; otherwise queries use FALSE
+	// so core transaction endpoints keep working before the syncer migrates.
+	isDataAnchorSQLExprEnabled = `(
+		EXISTS (
+			SELECT 1
+			FROM chain.data_anchor_factory_watchlist w
+			WHERE LOWER(w.factory_address) = LOWER(t.to_address)
+		)
+		OR EXISTS (
+			SELECT 1
+			FROM chain.daily_commitment_stats d
+			WHERE LOWER(d.daily_contract_address) = LOWER(t.to_address)
+		)
+	)`
 )
 
 var (
@@ -497,13 +514,14 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
           COALESCE(t.from_address, ''),
           COALESCE(t.to_address, ''),
           COALESCE(t.data_method, ''),
-          COALESCE(b.timestamp, 0) as timestamp
+          COALESCE(b.timestamp, 0) as timestamp,
+          %s AS is_data_anchor
        FROM chain.transactions t
        LEFT JOIN chain.blocks b ON t.block_number = b.number
        WHERE %s
        ORDER BY t.block_number DESC, t.created_at DESC NULLS LAST
        LIMIT $%d OFFSET $%d
-    `, fullWhereClause, paramIndex, paramIndex+1)
+    `, dataAnchorSQLExpr(), fullWhereClause, paramIndex, paramIndex+1)
 
 	queryParams = append(queryParams, req.PageSize, offset)
 
@@ -546,6 +564,7 @@ func GetTransactionList(req TransactionListRequest) (*TransactionListResponse, e
 			&item.To,
 			&dataMethod,
 			&blockTimestamp,
+			&item.IsDataAnchor,
 		)
 		if err != nil {
 			log.Printf("api_storage: scan tx row: %v", err)
@@ -622,7 +641,8 @@ func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
 			COALESCE(t.to_address, ''),
 			COALESCE(t.data_method, ''),
 			t.data,
-			b.timestamp
+			b.timestamp,
+			` + dataAnchorSQLExpr() + ` AS is_data_anchor
 		FROM chain.transactions t
 		JOIN chain.blocks b ON t.block_number = b.number
 		WHERE t.hash = $1
@@ -655,6 +675,7 @@ func GetTransactionByHash(hash string) (*TransactionListResponse, error) {
 		&dataMethod,
 		&data,
 		&blockTimestamp,
+		&item.IsDataAnchor,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

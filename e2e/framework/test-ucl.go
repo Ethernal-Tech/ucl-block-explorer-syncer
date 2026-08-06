@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -26,7 +28,45 @@ import (
 
 //go:embed erc20.bytecode
 var Erc20Bytecode string
+
+// Compiled from ucl-oracle/contracts at Solidity 0.8.24 with optimizer_runs=200.
+//
+//go:embed oracle_daily_commitment_factory.bytecode
+var dailyCommitmentFactoryBytecode string
+
+//go:embed oracle_mock_institution_registry.bytecode
+var mockInstitutionRegistryBytecode string
+
 var Erc20ConstructorMintAmount, _ = new(big.Int).SetString("1000000000000000000000", 10)
+
+const mockInstitutionRegistryABI = `[
+	{"type":"function","name":"setExists","stateMutability":"nonpayable",
+	 "inputs":[{"name":"institutionId","type":"bytes32"},{"name":"value","type":"bool"}],"outputs":[]},
+	{"type":"function","name":"setPublisher","stateMutability":"nonpayable",
+	 "inputs":[{"name":"institutionId","type":"bytes32"},{"name":"publisher","type":"address"},
+	 {"name":"authorized","type":"bool"}],"outputs":[]}
+]`
+
+const dailyCommitmentFactoryABI = `[
+	{"type":"constructor","stateMutability":"nonpayable",
+	 "inputs":[{"name":"registryAddress","type":"address"}]},
+	{"type":"function","name":"getOrDeployDaily","stateMutability":"nonpayable",
+	 "inputs":[{"name":"dayTs","type":"uint256"},{"name":"institutionId","type":"bytes32"},
+	 {"name":"dataType","type":"bytes32"}],"outputs":[{"name":"","type":"address"}]},
+	{"type":"event","name":"DailyDeployed","anonymous":false,
+	 "inputs":[{"name":"dayTs","type":"uint256","indexed":true},
+	 {"name":"institutionId","type":"bytes32","indexed":true},
+	 {"name":"dataType","type":"bytes32","indexed":true},
+	 {"name":"dailyContract","type":"address","indexed":false},
+	 {"name":"salt","type":"bytes32","indexed":false}]}
+]`
+
+const dailyCommitmentABI = `[
+	{"type":"function","name":"commit","stateMutability":"nonpayable",
+	 "inputs":[{"name":"hashes","type":"bytes32[]"}],"outputs":[]},
+	{"type":"function","name":"commitmentCount","stateMutability":"view",
+	 "inputs":[],"outputs":[{"name":"","type":"uint256"}]}
+]`
 
 var nodesRpcPorts = []int{10002, 20002, 30002, 40002}
 
@@ -266,6 +306,180 @@ func (u *UCL) DeployERC20(privateKey string) *types.Receipt {
 	}
 
 	return u.sendTx(privateKey, nil, data, big.NewInt(0), 3000000)
+}
+
+func (u *UCL) DeployMockInstitutionRegistry(privateKey string) *types.Receipt {
+	return u.deployContract(privateKey, mockInstitutionRegistryBytecode, nil, 3000000)
+}
+
+func (u *UCL) ConfigureMockInstitution(
+	privateKey string,
+	registry common.Address,
+	institutionID common.Hash,
+	publisher common.Address,
+) {
+	registryABI := u.parseABI(mockInstitutionRegistryABI)
+
+	setExists, err := registryABI.Pack("setExists", institutionID, true)
+	if err != nil {
+		u.t.Fatalf("encode mock registry setExists call: %v", err)
+	}
+
+	u.sendTx(privateKey, &registry, setExists, big.NewInt(0), 200000)
+
+	setPublisher, err := registryABI.Pack(
+		"setPublisher",
+		institutionID,
+		publisher,
+		true,
+	)
+	if err != nil {
+		u.t.Fatalf("encode mock registry setPublisher call: %v", err)
+	}
+
+	u.sendTx(privateKey, &registry, setPublisher, big.NewInt(0), 300000)
+}
+
+func (u *UCL) DeployDailyCommitmentFactory(
+	privateKey string,
+	registry common.Address,
+) *types.Receipt {
+	factoryABI := u.parseABI(dailyCommitmentFactoryABI)
+
+	constructor, err := factoryABI.Pack("", registry)
+	if err != nil {
+		u.t.Fatalf("encode DailyCommitmentFactory constructor: %v", err)
+	}
+
+	return u.deployContract(
+		privateKey,
+		dailyCommitmentFactoryBytecode,
+		constructor,
+		10000000,
+	)
+}
+
+func (u *UCL) DeployDailyCommitment(
+	privateKey string,
+	factory common.Address,
+	dayTimestamp uint64,
+	institutionID common.Hash,
+	dataType common.Hash,
+) (*types.Receipt, common.Address) {
+	factoryABI := u.parseABI(dailyCommitmentFactoryABI)
+
+	call, err := factoryABI.Pack(
+		"getOrDeployDaily",
+		new(big.Int).SetUint64(dayTimestamp),
+		institutionID,
+		dataType,
+	)
+	if err != nil {
+		u.t.Fatalf("encode getOrDeployDaily call: %v", err)
+	}
+
+	receipt := u.sendTx(privateKey, &factory, call, big.NewInt(0), 10000000)
+	event := factoryABI.Events["DailyDeployed"]
+
+	for _, entry := range receipt.Logs {
+		if entry.Address != factory || len(entry.Topics) != 4 || entry.Topics[0] != event.ID {
+			continue
+		}
+
+		values, err := event.Inputs.NonIndexed().Unpack(entry.Data)
+		if err != nil {
+			u.t.Fatalf("decode DailyDeployed event: %v", err)
+		}
+
+		if len(values) != 2 {
+			u.t.Fatalf("DailyDeployed data field count: got %d want 2", len(values))
+		}
+
+		dailyAddress, ok := values[0].(common.Address)
+		if !ok || dailyAddress == (common.Address{}) {
+			u.t.Fatalf("DailyDeployed daily contract has unexpected type/value %T %v",
+				values[0], values[0])
+		}
+
+		return receipt, dailyAddress
+	}
+
+	u.t.Fatal("getOrDeployDaily receipt did not contain DailyDeployed")
+
+	return nil, common.Address{}
+}
+
+func (u *UCL) CommitDaily(
+	privateKey string,
+	daily common.Address,
+	hashes []common.Hash,
+) *types.Receipt {
+	dailyABI := u.parseABI(dailyCommitmentABI)
+
+	call, err := dailyABI.Pack("commit", hashes)
+	if err != nil {
+		u.t.Fatalf("encode DailyCommitment commit call: %v", err)
+	}
+
+	return u.sendTx(privateKey, &daily, call, big.NewInt(0), 3000000)
+}
+
+func (u *UCL) DailyCommitmentCount(daily common.Address) uint64 {
+	dailyABI := u.parseABI(dailyCommitmentABI)
+
+	call, err := dailyABI.Pack("commitmentCount")
+	if err != nil {
+		u.t.Fatalf("encode DailyCommitment commitmentCount call: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result, err := u.client.CallContract(ctx, ethereum.CallMsg{To: &daily, Data: call}, nil)
+	if err != nil {
+		u.t.Fatalf("call DailyCommitment commitmentCount: %v", err)
+	}
+
+	values, err := dailyABI.Unpack("commitmentCount", result)
+	if err != nil {
+		u.t.Fatalf("decode DailyCommitment commitmentCount: %v", err)
+	}
+
+	if len(values) != 1 {
+		u.t.Fatalf("commitmentCount result count: got %d want 1", len(values))
+	}
+
+	count, ok := values[0].(*big.Int)
+	if !ok || !count.IsUint64() {
+		u.t.Fatalf("commitmentCount has unexpected type/value %T %v", values[0], values[0])
+	}
+
+	return count.Uint64()
+}
+
+func (u *UCL) deployContract(
+	privateKey string,
+	bytecode string,
+	constructor []byte,
+	gasLimit uint64,
+) *types.Receipt {
+	data, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(bytecode), "0x"))
+	if err != nil {
+		u.t.Fatalf("decode contract bytecode: %v", err)
+	}
+
+	data = append(data, constructor...)
+
+	return u.sendTx(privateKey, nil, data, big.NewInt(0), gasLimit)
+}
+
+func (u *UCL) parseABI(definition string) abi.ABI {
+	contractABI, err := abi.JSON(strings.NewReader(definition))
+	if err != nil {
+		u.t.Fatalf("parse contract ABI: %v", err)
+	}
+
+	return contractABI
 }
 
 func (u *UCL) MintERC20(privateKey string, contractAddr, to common.Address, amount *big.Int) *types.Receipt {

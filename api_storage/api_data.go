@@ -102,14 +102,15 @@ type TransactionListData struct {
 }
 
 type TransactionListItem struct {
-	BlockNumber int64               `json:"blockNumber"`
-	From        string              `json:"from"`
-	Hash        string              `json:"hash"`
-	ID          int64               `json:"id"`
-	To          string              `json:"to"`
-	Timestamp   int64               `json:"timestamp"`
-	Metadata    TransactionMetadata `json:"metadata"`
-	Data        string              `json:"data"`
+	BlockNumber  int64               `json:"blockNumber"`
+	From         string              `json:"from"`
+	Hash         string              `json:"hash"`
+	ID           int64               `json:"id"`
+	To           string              `json:"to"`
+	Timestamp    int64               `json:"timestamp"`
+	Metadata     TransactionMetadata `json:"metadata"`
+	Data         string              `json:"data"`
+	IsDataAnchor bool                `json:"isDataAnchor"`
 }
 
 type TransactionMetadata struct {

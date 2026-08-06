@@ -126,6 +126,8 @@ func (d *DB) TruncateAll(t *testing.T) {
 			chain.metadata,
 			chain.erc20_watchlist,
 			chain.erc20_hourly_stats,
+			chain.daily_commitment_stats,
+			chain.data_anchor_factory_watchlist,
 			chain.entity_hour_participation,
 			chain.validator_metadata,
 			chain.asset_issuers,
@@ -549,6 +551,89 @@ func (d *DB) WaitForERC20Block(t *testing.T, address common.Address, maxBlock ui
 	}
 
 	return fmt.Errorf("timeout: erc20 syncer did not process up to block %d within %s", maxBlock, timeout)
+}
+
+type DailyCommitmentStat struct {
+	FactoryAddress       string
+	DayTimestamp         int64
+	DataType             string
+	InstitutionID        string
+	DailyContractAddress string
+	CommitmentCount      int64
+	DiscoveryBlock       uint64
+}
+
+func (d *DB) GetDailyCommitmentStats(t *testing.T) []DailyCommitmentStat {
+	t.Helper()
+
+	rows, err := d.conn.Query(`
+		SELECT factory_address, day_timestamp, data_type, institution_id,
+			daily_contract_address, commitment_count, discovery_block
+		FROM chain.daily_commitment_stats
+		ORDER BY daily_contract_address
+	`)
+	if err != nil {
+		t.Fatalf("query daily commitment stats: %v", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	stats := make([]DailyCommitmentStat, 0)
+
+	for rows.Next() {
+		var stat DailyCommitmentStat
+
+		if err := rows.Scan(
+			&stat.FactoryAddress,
+			&stat.DayTimestamp,
+			&stat.DataType,
+			&stat.InstitutionID,
+			&stat.DailyContractAddress,
+			&stat.CommitmentCount,
+			&stat.DiscoveryBlock,
+		); err != nil {
+			t.Fatalf("scan daily commitment stat: %v", err)
+		}
+
+		stats = append(stats, stat)
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate daily commitment stats: %v", err)
+	}
+
+	return stats
+}
+
+func (d *DB) WaitForDataAnchorBlock(
+	t *testing.T,
+	factory common.Address,
+	maxBlock uint64,
+	timeout time.Duration,
+) error {
+	t.Helper()
+
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		var nextBlock uint64
+
+		err := d.conn.QueryRow(`
+			SELECT next_block
+			FROM chain.data_anchor_factory_watchlist
+			WHERE factory_address = $1
+		`, factory.Hex()).Scan(&nextBlock)
+		if err == nil && nextBlock > maxBlock {
+			return nil
+		}
+
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("query data-anchor cursor: %w", err)
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout: data-anchor syncer did not process up to block %d within %s",
+		maxBlock, timeout)
 }
 
 func (d *DB) GetTotalGasUsed(t *testing.T) uint64 {

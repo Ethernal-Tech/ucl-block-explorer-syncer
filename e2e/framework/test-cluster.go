@@ -38,6 +38,12 @@ func WithErc20Stats() Option {
 	}
 }
 
+func WithDataAnchorStats() Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.DataAnchorStats = true
+	}
+}
+
 func WithEoaActivity() Option {
 	return func(cfg *TestClusterConfig) {
 		cfg.Syncer.EoaActivityStats = true
