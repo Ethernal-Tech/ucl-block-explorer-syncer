@@ -1,6 +1,8 @@
 package framework
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type UCLConfig struct {
 	Flags     []string
@@ -34,6 +36,8 @@ type SyncerConfig struct {
 	Erc20Stats        bool
 	Erc20StartFromTip bool
 	EoaActivityStats  bool
+	NumberOfRetries   uint64
+	RetryInterval     uint64
 }
 
 type ApiConfig struct {
@@ -67,10 +71,12 @@ func DefaultFrameworkConfig() *TestClusterConfig {
 			Name:       "syncer_e2e",
 		},
 		Syncer: SyncerConfig{
-			RpcUrl:       "http://localhost:10002",
-			PollInterval: 2000,
-			BatchSize:    1,
-			TxWorkers:    1,
+			RpcUrl:          "http://localhost:10002",
+			PollInterval:    2000,
+			BatchSize:       1,
+			TxWorkers:       1,
+			RetryInterval:   1000,
+			NumberOfRetries: 10,
 		},
 		API: ApiConfig{
 			Listen:      "localhost:8545",
