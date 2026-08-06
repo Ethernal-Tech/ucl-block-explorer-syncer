@@ -27,6 +27,7 @@ type DailyDeployedEvent struct {
 
 func DecodeDailyDeployedLog(log *types.ReceiptLog, factory common.Address) (DailyDeployedEvent, bool) {
 	event, reason := decodeDailyDeployedLog(log, factory)
+
 	return event, reason == ""
 }
 
@@ -116,6 +117,7 @@ func decodeDailyDeployedLog(
 		institutionID.Bytes(),
 		dataType.Bytes(),
 	)
+
 	if dailyAddress == ZeroAddr {
 		return DailyDeployedEvent{}, "zero daily contract address"
 	}
@@ -135,6 +137,7 @@ func decodeDailyDeployedLog(
 
 func DecodeCommittedLog(log *types.ReceiptLog, dailyContract common.Address) (common.Hash, bool) {
 	hash, reason := decodeCommittedLog(log, dailyContract)
+
 	return hash, reason == ""
 }
 

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	syncerdatabase "github.com/Ethernal-Tech/ucl-block-explorer-syncer/database"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -104,6 +105,15 @@ func (d *DB) StartForTestMain() {
 			}
 
 			d.conn = conn
+
+			// init.sql is the legacy base schema; data-anchor tables come from
+			// numbered migrations. Apply them before any test TruncateAll.
+			if err := syncerdatabase.RunMigrations(conn, func(format string, args ...any) {
+				fmt.Printf(format+"\n", args...)
+			}); err != nil {
+				fmt.Printf("failed to run database migrations: %v\n", err)
+				os.Exit(1)
+			}
 
 			return
 		}

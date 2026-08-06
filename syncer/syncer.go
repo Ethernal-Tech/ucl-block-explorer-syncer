@@ -1695,6 +1695,7 @@ func (s *Syncer) runDataAnchorWorkerController() {
 		}
 
 		enabled := 0
+
 		for _, factory := range factories {
 			if factory != nil && factory.Enabled {
 				enabled++
@@ -1702,7 +1703,8 @@ func (s *Syncer) runDataAnchorWorkerController() {
 		}
 
 		if enabled == 0 && time.Since(lastEmptyWatchlistLog) >= 15*time.Second {
-			lastEmptyWatchlistLog = time.Now()
+			lastEmptyWatchlistLog = time.Now().UTC()
+
 			s.log("data-anchor watchlist has no enabled factories "+
 				"(register via POST /admin/v1/data-anchor/factories); active_workers=%d",
 				len(s.dataAnchorwHandles))
@@ -1788,7 +1790,7 @@ func (s *Syncer) createDataAnchorWorkerHandle(
 		if tip == nil || *tip < blockNumber {
 			// Rate-limit: at the tip this path runs every process interval.
 			if time.Since(lastTipWaitLog) >= 15*time.Second {
-				lastTipWaitLog = time.Now()
+				lastTipWaitLog = time.Now().UTC()
 
 				if tip == nil {
 					s.log("data-anchor worker %s waiting: tx worker tip not set yet (need block %d)",

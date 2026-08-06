@@ -233,6 +233,7 @@ func (b *PgDataAnchorBackend) ProcessBlock(
 
 		children[event.DailyContractAddress] = struct{}{}
 		discovered++
+
 		b.log("data-anchor discovered daily=%s day=%d institution=%s data_type=%s factory=%s block=%d",
 			event.DailyContractAddress.Hex(),
 			event.DayTimestamp,

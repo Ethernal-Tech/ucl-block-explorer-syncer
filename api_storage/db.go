@@ -6,7 +6,10 @@ import (
 	"time"
 )
 
-const dataAnchorSchemaProbeInterval = 5 * time.Second
+const (
+	dataAnchorSchemaProbeInterval = 5 * time.Second
+	isDataAnchorSQLExprDisabled   = "FALSE"
+)
 
 var (
 	db *sql.DB
@@ -52,11 +55,11 @@ func dataAnchorSQLExpr() string {
 		return isDataAnchorSQLExprEnabled
 	}
 
-	return "FALSE"
+	return isDataAnchorSQLExprDisabled
 }
 
 func refreshDataAnchorSchemaLocked(conn *sql.DB) {
-	dataAnchorLastProbe = time.Now()
+	dataAnchorLastProbe = time.Now().UTC()
 	dataAnchorReady = dataAnchorTablesReady(conn)
 }
 

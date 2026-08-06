@@ -189,6 +189,7 @@ func TestE2E_DataAnchorDailyCommitments(t *testing.T) {
 	}
 
 	unrelatedRecipient := common.HexToAddress("0xd0069BA916F87B24Df5Db1F53584F1809bc8B1bd")
+
 	unrelatedReceipt := ts.UCL.SendNativeTokens(privateKey, unrelatedRecipient, big.NewInt(1))
 	if err := ts.DB.WaitForBlock(t, unrelatedReceipt.BlockNumber.Uint64(), 45*time.Second); err != nil {
 		t.Fatalf("wait for unrelated transaction indexing: %v", err)

@@ -15,8 +15,10 @@ func TestSetDBDisablesDataAnchorExprWhenTablesMissing(t *testing.T) {
 	defer conn.Close()
 
 	previous := db
+
 	t.Cleanup(func() {
 		db = previous
+
 		resetDataAnchorSchemaStateForTest()
 	})
 
@@ -25,7 +27,7 @@ func TestSetDBDisablesDataAnchorExprWhenTablesMissing(t *testing.T) {
 
 	SetDB(conn)
 
-	if got := dataAnchorSQLExpr(); got != "FALSE" {
+	if got := dataAnchorSQLExpr(); got != isDataAnchorSQLExprDisabled {
 		t.Fatalf("dataAnchorSQLExpr: got %q want FALSE", got)
 	}
 
@@ -42,8 +44,10 @@ func TestDataAnchorSQLExprReprobesAfterTablesAppear(t *testing.T) {
 	defer conn.Close()
 
 	previous := db
+
 	t.Cleanup(func() {
 		db = previous
+
 		resetDataAnchorSchemaStateForTest()
 	})
 
@@ -51,12 +55,12 @@ func TestDataAnchorSQLExprReprobesAfterTablesAppear(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"ready"}).AddRow(false))
 	SetDB(conn)
 
-	if got := dataAnchorSQLExpr(); got != "FALSE" {
+	if got := dataAnchorSQLExpr(); got != isDataAnchorSQLExprDisabled {
 		t.Fatalf("before migration: got %q want FALSE", got)
 	}
 
 	dataAnchorMu.Lock()
-	dataAnchorLastProbe = time.Now().Add(-dataAnchorSchemaProbeInterval)
+	dataAnchorLastProbe = time.Now().UTC().Add(-dataAnchorSchemaProbeInterval)
 	dataAnchorMu.Unlock()
 
 	mock.ExpectQuery("SELECT to_regclass").

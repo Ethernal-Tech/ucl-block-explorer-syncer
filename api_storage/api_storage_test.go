@@ -280,6 +280,7 @@ func TestGetTransactionList_IsDataAnchor(t *testing.T) {
 
 	previous := db
 	db = conn
+
 	t.Cleanup(func() { db = previous })
 
 	factory := "0x1000000000000000000000000000000000000001"
@@ -357,6 +358,7 @@ func TestGetTransactionByHash_IsDataAnchor(t *testing.T) {
 
 			previous := db
 			db = conn
+
 			t.Cleanup(func() { db = previous })
 
 			hash := "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
