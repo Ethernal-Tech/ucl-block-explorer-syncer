@@ -227,7 +227,7 @@ func TestMiddleware_PassesThroughNonOptions(t *testing.T) {
 func TestHandler_NoDB_AdminRoutesMissing(t *testing.T) {
 	t.Parallel()
 
-	s := New(nil, Config{AdminAPISecret: "secret"})
+	s := New(nil, Config{AdminAPISecret: testAdminAPISecret})
 	h := s.Handler()
 
 	rec := httptest.NewRecorder()

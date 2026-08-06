@@ -23,7 +23,7 @@ func TestHandleAdminEsg_NoSecret(t *testing.T) {
 func TestHandleAdminEsg_WrongToken(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret"}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/esg", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
@@ -38,7 +38,7 @@ func TestHandleAdminEsg_WrongToken(t *testing.T) {
 func TestHandleAdminEsg_MissingToken(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret"}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/esg", nil)
 
@@ -52,7 +52,7 @@ func TestHandleAdminEsg_MissingToken(t *testing.T) {
 func TestHandleAdminEsg_NoDB(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret", DB: nil}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret, DB: nil}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/esg", nil)
 	req.Header.Set("Authorization", "Bearer secret")

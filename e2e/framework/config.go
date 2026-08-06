@@ -16,13 +16,13 @@ type DBConfig struct {
 	Host       string
 	Port       string
 	User       string
-	Password   string //nolint:gosec
+	password   string
 	Name       string
 }
 
 func (c *DBConfig) ConnString() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		c.User, c.Password, c.Host, c.Port, c.Name)
+		c.User, c.password, c.Host, c.Port, c.Name)
 }
 
 type SyncerConfig struct {
@@ -44,6 +44,7 @@ type ApiConfig struct {
 	Listen      string
 	Logging     bool
 	AdminSecret string
+	NodeRPC     string
 }
 
 type TestClusterConfig struct {
@@ -67,7 +68,7 @@ func DefaultFrameworkConfig() *TestClusterConfig {
 			Host:       "localhost",
 			Port:       "5433",
 			User:       "syncer",
-			Password:   "syncer",
+			password:   "syncer",
 			Name:       "syncer_e2e",
 		},
 		Syncer: SyncerConfig{

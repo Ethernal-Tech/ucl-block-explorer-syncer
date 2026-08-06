@@ -22,6 +22,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+const (
+	testPremineFlag  = "--premine"
+	testWriteLogsArg = "write-logs"
+)
+
 func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 	run := func(t *testing.T, fullBlock bool) {
 		t.Helper()
@@ -44,7 +49,7 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 
 		premineFlagValue := strings.Join(premineAddresses, ",")
 
-		uclFlags := []string{"write-logs", "--premine", premineFlagValue}
+		uclFlags := []string{testWriteLogsArg, testPremineFlag, premineFlagValue}
 		if fullBlock {
 			uclFlags = append(uclFlags, "--full-block")
 		}
@@ -149,7 +154,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			to = common.HexToAddress("0xd0069BA916F87B24Df5Db1F53584F1809bc8B1bd")
 		)
 
-		uclFlags := []string{"write-logs", "--premine", "0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0"}
+		uclFlags := []string{testWriteLogsArg, testPremineFlag, "0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0"}
 
 		opts := []framework.Option{framework.WithLogging(),
 			framework.WithErc20Stats(),
@@ -320,7 +325,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			to = common.HexToAddress("0xd0069BA916F87B24Df5Db1F53584F1809bc8B1bd")
 		)
 
-		uclFlags := []string{"write-logs", "--premine", "0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0"}
+		uclFlags := []string{testWriteLogsArg, testPremineFlag, "0x94e98EDD102F0fcdF7f0F2Fd54AB0855A4b202C0"}
 
 		opts := []framework.Option{
 			framework.WithLogging(),
@@ -660,8 +665,8 @@ func TestE2E_EOAActivity(t *testing.T) {
 		framework.WithLogging(),
 		framework.WithEoaActivity(),
 		framework.WithUclFlags(
-			"write-logs",
-			"--premine", strings.Join([]string{addr1.Hex(), addr2.Hex(), addr3.Hex(), addr4.Hex()}, ","),
+			testWriteLogsArg,
+			testPremineFlag, strings.Join([]string{addr1.Hex(), addr2.Hex(), addr3.Hex(), addr4.Hex()}, ","),
 		),
 	)
 
@@ -808,7 +813,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 		t,
 		framework.WithLogging(),
 		framework.WithFullBlock(),
-		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+		framework.WithUclFlags(testWriteLogsArg, testPremineFlag, senderAddress.String()))
 
 	defer testCluster.Stop()
 
@@ -884,7 +889,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 		}
 
 		opts = append(opts,
-			framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+			framework.WithUclFlags(testWriteLogsArg, testPremineFlag, senderAddress.String()))
 
 		testCluster := framework.NewTestCluster(t, opts...)
 
@@ -1058,7 +1063,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 		framework.WithLogging(),
 		framework.WithFullBlock(),
 		framework.WithEoaActivity(),
-		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()),
+		framework.WithUclFlags(testWriteLogsArg, testPremineFlag, senderAddress.String()),
 	)
 	defer testCluster.Stop()
 

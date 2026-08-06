@@ -1,0 +1,544 @@
+openapi: 3.0.3
+info:
+  title: UCL Block Explorer Public API
+  description: |
+    Public REST API for third-party clients.
+
+    Native address balances require the API process to be started with `--node-rpc`.
+    Block, transaction, and token-transfer data are served from the indexed PostgreSQL database.
+  version: 1.0.0
+
+servers:
+  - url: /
+    description: Relative to the explorer API process
+
+tags:
+  - name: Blocks
+  - name: Transactions
+  - name: Addresses
+  - name: Tokens
+
+paths:
+  /api/v1/blocks:
+    get:
+      operationId: getBlocks
+      tags: [Blocks]
+      summary: List indexed blocks
+      description: |
+        Returns a paginated list of blocks ordered by block number descending.
+        Equivalent JSON-RPC method: `explorer_getBlockList`.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number (1-based).
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+          description: Number of blocks per page.
+        - name: maxBlockNumber
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+          description: |
+            Inclusive upper bound on block number (decimal string).
+            When omitted or invalid, the storage layer applies its default upper bound.
+          example: "1000000"
+        - name: onlyWithTransactions
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: When true, only blocks that contain at least one indexed transaction are returned.
+      responses:
+        '200':
+          description: Paginated block list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlocksResponse'
+              example:
+                list:
+                  - blockHash: "0xabc..."
+                    blockNumber: "123"
+                    nonce: "0x0"
+                    timestamp: 1710000000000
+                    txn: "2"
+                total: 123
+                page: 1
+                pageSize: 25
+        '400':
+          description: Invalid query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidPage:
+                  value:
+                    error:
+                      code: invalid_page
+                      message: page must be a positive integer
+                invalidPageSize:
+                  value:
+                    error:
+                      code: invalid_page_size
+                      message: pageSize must be an integer between 1 and 100
+                invalidOnlyWithTransactions:
+                  value:
+                    error:
+                      code: invalid_query_parameter
+                      message: onlyWithTransactions must be a boolean
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: database_error
+                  message: failed to list blocks
+
+  /api/v1/transactions/{hash}:
+    get:
+      operationId: getTransactionByHash
+      tags: [Transactions]
+      summary: Get a transaction by hash
+      description: |
+        Returns one indexed transaction.
+        Equivalent JSON-RPC method: `explorer_getTransactionByHash`
+        (REST uses HTTP status codes instead of returning `null` for missing transactions).
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/TransactionHash'
+          description: "`0x`-prefixed 32-byte transaction hash."
+      responses:
+        '200':
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+              example:
+                blockNumber: 123
+                from: "0x1111111111111111111111111111111111111111"
+                hash: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+                id: 1
+                to: "0x2222222222222222222222222222222222222222"
+                timestamp: 1710000000000
+                metadata:
+                  functionName: transfer
+                data: "0xa9059cbb..."
+        '400':
+          description: Malformed transaction hash
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: invalid_transaction_hash
+                  message: transaction hash must be a 0x-prefixed 32-byte hexadecimal value
+        '404':
+          description: Transaction not indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: transaction_not_found
+                  message: transaction not found
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: database_error
+                  message: failed to get transaction
+
+  /api/v1/addresses/{address}/balance:
+    get:
+      operationId: getAddressBalance
+      tags: [Addresses]
+      summary: Get native address balance
+      description: |
+        Returns the native currency balance from the configured chain node via `eth_getBalance`.
+        Supports `latest` and explicit canonical block numbers. `pending` is not supported.
+        Requires `--node-rpc` on the API process.
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Address'
+          description: Account address (any valid hex form; response uses EIP-55 checksum).
+        - name: block
+          in: query
+          required: false
+          schema:
+            type: string
+            default: latest
+            description: |
+              Block tag. Either `latest` or a nonnegative decimal block number.
+              `pending` and `earliest` are rejected.
+            example: latest
+      responses:
+        '200':
+          description: Native balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AddressBalance'
+              example:
+                address: "0x1111111111111111111111111111111111111111"
+                block: latest
+                balanceWei: "1000000000000000000"
+                balanceHex: "0xde0b6b3a7640000"
+        '400':
+          description: Invalid address or block
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidAddress:
+                  value:
+                    error:
+                      code: invalid_address
+                      message: address must be a valid hex address
+                invalidBlock:
+                  value:
+                    error:
+                      code: invalid_block
+                      message: block must be latest or a nonnegative decimal block number
+        '502':
+          description: Upstream node RPC failure or malformed response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: node_rpc_error
+                  message: failed to fetch balance from node RPC
+        '503':
+          description: Node RPC not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: node_rpc_not_configured
+                  message: node RPC is not configured
+        '504':
+          description: Node RPC request timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: node_rpc_timeout
+                  message: node RPC request timed out
+
+  /api/v1/tokens/{tokenAddress}/transfers:
+    get:
+      operationId: getTokenTransfers
+      tags: [Tokens]
+      summary: List ERC-20 token transfers
+      description: |
+        Returns decoded standard ERC-20 `Transfer` logs for one token contract,
+        ordered by `(blockNumber DESC, logIndex DESC, txHash DESC)`.
+        Mint and burn events (zero-address sender or recipient) are included.
+        A nonexistent token returns an empty list, not an error.
+      parameters:
+        - name: tokenAddress
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Address'
+          description: ERC-20 contract address.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque pagination cursor from a previous response `nextCursor`.
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: Maximum number of transfers to return.
+        - name: fromBlock
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+          description: Inclusive lower bound block number (decimal string).
+          example: "1000"
+        - name: toBlock
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
+          description: Inclusive upper bound block number (decimal string).
+          example: "2000"
+        - name: address
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Address'
+          description: Optional filter matching sender or recipient of the transfer.
+      responses:
+        '200':
+          description: Token transfer page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenTransfersResponse'
+              example:
+                list:
+                  - transactionHash: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+                    logIndex: 0
+                    blockNumber: 123
+                    tokenAddress: "0x3333333333333333333333333333333333333333"
+                    from: "0x1111111111111111111111111111111111111111"
+                    to: "0x2222222222222222222222222222222222222222"
+                    valueRaw: "1000000000000000000"
+                nextCursor: "MTIzfDB8MHhhYmNkZWY..."
+                pageSize: 50
+        '400':
+          description: Invalid path or query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidAddress:
+                  value:
+                    error:
+                      code: invalid_address
+                      message: tokenAddress must be a valid hex address
+                invalidBlock:
+                  value:
+                    error:
+                      code: invalid_block
+                      message: invalid fromBlock
+                invalidCursor:
+                  value:
+                    error:
+                      code: invalid_cursor
+                      message: cursor is malformed
+                invalidPageSize:
+                  value:
+                    error:
+                      code: invalid_page_size
+                      message: pageSize must be an integer between 1 and 100
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: database_error
+                  message: failed to list token transfers
+
+components:
+  schemas:
+    Address:
+      type: string
+      description: 20-byte Ethereum address as a `0x`-prefixed hex string.
+      pattern: '^0x[0-9a-fA-F]{40}$'
+      example: "0x1111111111111111111111111111111111111111"
+
+    TransactionHash:
+      type: string
+      description: 32-byte transaction hash as a `0x`-prefixed hex string.
+      pattern: '^0x[0-9a-fA-F]{64}$'
+      example: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code.
+          example: invalid_transaction_hash
+        message:
+          type: string
+          description: Human-readable error description.
+          example: transaction hash must be a 0x-prefixed 32-byte hexadecimal value
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+
+    Block:
+      type: object
+      required: [blockHash, blockNumber, nonce, timestamp, txn]
+      properties:
+        blockHash:
+          type: string
+          description: Block hash.
+        blockNumber:
+          type: string
+          description: Block number as a decimal string.
+        nonce:
+          type: string
+          description: Block nonce (`0x`-prefixed when present).
+        timestamp:
+          type: integer
+          format: int64
+          description: Block timestamp in milliseconds since Unix epoch.
+        txn:
+          type: string
+          description: Transaction count for the block as a decimal string.
+
+    BlocksResponse:
+      type: object
+      required: [list, total, page, pageSize]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/Block'
+        total:
+          type: integer
+          format: int64
+          description: Total number of blocks matching the filter.
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    TransactionMetadata:
+      type: object
+      required: [functionName]
+      properties:
+        functionName:
+          type: string
+          description: Resolved method name when known; otherwise `unknown`.
+
+    Transaction:
+      type: object
+      required: [blockNumber, from, hash, id, to, timestamp, metadata, data]
+      properties:
+        blockNumber:
+          type: integer
+          format: int64
+        from:
+          type: string
+        hash:
+          $ref: '#/components/schemas/TransactionHash'
+        id:
+          type: integer
+          format: int64
+          description: Placeholder list identifier (always `1` for single-hash lookups).
+        to:
+          type: string
+        timestamp:
+          type: integer
+          format: int64
+          description: Block timestamp in milliseconds since Unix epoch.
+        metadata:
+          $ref: '#/components/schemas/TransactionMetadata'
+        data:
+          type: string
+          description: Transaction input data (`0x`-prefixed hex).
+
+    AddressBalance:
+      type: object
+      required: [address, block, balanceWei, balanceHex]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+          description: EIP-55 checksummed address.
+        block:
+          type: string
+          description: Requested block tag (`latest` or decimal block number).
+        balanceWei:
+          type: string
+          description: Native balance in wei as a base-10 string.
+          example: "1000000000000000000"
+        balanceHex:
+          type: string
+          description: Native balance as a `0x`-prefixed hex quantity.
+          example: "0xde0b6b3a7640000"
+
+    TokenTransfer:
+      type: object
+      required:
+        - transactionHash
+        - logIndex
+        - blockNumber
+        - tokenAddress
+        - from
+        - to
+        - valueRaw
+      properties:
+        transactionHash:
+          $ref: '#/components/schemas/TransactionHash'
+        logIndex:
+          type: integer
+          description: Log index within the transaction receipt.
+        blockNumber:
+          type: integer
+          format: int64
+        tokenAddress:
+          $ref: '#/components/schemas/Address'
+        from:
+          type: string
+          description: Transfer sender (zero address for mints).
+        to:
+          type: string
+          description: Transfer recipient (zero address for burns).
+        valueRaw:
+          type: string
+          description: Transfer amount as a base-10 integer string (token smallest unit).
+
+    TokenTransfersResponse:
+      type: object
+      required: [list, pageSize]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenTransfer'
+        nextCursor:
+          type: string
+          description: Opaque cursor for the next page. Omitted when there are no more results.
+        pageSize:
+          type: integer

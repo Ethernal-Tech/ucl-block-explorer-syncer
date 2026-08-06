@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+const (
+	testDashSentinel       = "dash sentinel"
+	testDashInput          = "-"
+	testNonNumeric         = "non-numeric"
+	testNonNumericInput    = "abc"
+	testUnknownGranularity = "week"
+	testInvalidAddress     = "bad"
+	testFromField          = "from"
+)
+
 func TestNormalizeMaxBlockNumber(t *testing.T) {
 	t.Parallel()
 
@@ -15,11 +25,11 @@ func TestNormalizeMaxBlockNumber(t *testing.T) {
 		want  string
 	}{
 		{"empty string", "", maxBlockNumberDefault},
-		{"dash sentinel", "-", maxBlockNumberDefault},
+		{testDashSentinel, testDashInput, maxBlockNumberDefault},
 		{"whitespace only", "   ", maxBlockNumberDefault},
 		{"negative number", "-1", maxBlockNumberDefault},
 		{"large negative", "-9999", maxBlockNumberDefault},
-		{"non-numeric", "abc", maxBlockNumberDefault},
+		{testNonNumeric, testNonNumericInput, maxBlockNumberDefault},
 		{"alphanumeric", "12abc", maxBlockNumberDefault},
 		{"overflow int64", "9223372036854775808", maxBlockNumberDefault},
 		{"zero", "0", "0"},
@@ -55,9 +65,9 @@ func TestValidBlockNumberString(t *testing.T) {
 		want  result
 	}{
 		{"empty", "", result{"", false}},
-		{"dash sentinel", "-", result{"", false}},
+		{testDashSentinel, testDashInput, result{"", false}},
 		{"negative", "-5", result{"", false}},
-		{"non-numeric", "abc", result{"", false}},
+		{testNonNumeric, testNonNumericInput, result{"", false}},
 		{"float", "1.5", result{"", false}},
 		{"zero", "0", result{"0", true}},
 		{"positive", "999", result{"999", true}},
@@ -125,7 +135,7 @@ func TestErc20DayUtcLabel(t *testing.T) {
 		{
 			name:      "unknown granularity falls back to day",
 			ts:        time.Date(2024, 3, 7, 0, 0, 0, 0, time.UTC),
-			gran:      "week",
+			gran:      testUnknownGranularity,
 			wantExact: "2024-03-07",
 		},
 		{
@@ -193,7 +203,7 @@ func TestGetTransactionList_AddressValidation(t *testing.T) {
 			name:        "invalid from address",
 			req:         TransactionListRequest{From: "not-an-address"},
 			wantCode:    "400",
-			wantMsgFrag: "from",
+			wantMsgFrag: testFromField,
 		},
 		{
 			name:        "invalid to address",
@@ -203,19 +213,19 @@ func TestGetTransactionList_AddressValidation(t *testing.T) {
 		},
 		{
 			name:        "invalid from checked before to",
-			req:         TransactionListRequest{From: "bad", To: "also-bad"},
+			req:         TransactionListRequest{From: testInvalidAddress, To: "also-bad"},
 			wantCode:    "400",
-			wantMsgFrag: "from",
+			wantMsgFrag: testFromField,
 		},
 		{
 			name:        "invalid from with StrictMode true",
-			req:         TransactionListRequest{From: "bad", StrictMode: true},
+			req:         TransactionListRequest{From: testInvalidAddress, StrictMode: true},
 			wantCode:    "400",
-			wantMsgFrag: "from",
+			wantMsgFrag: testFromField,
 		},
 		{
 			name:        "invalid to with StrictMode true",
-			req:         TransactionListRequest{To: "bad", StrictMode: true},
+			req:         TransactionListRequest{To: testInvalidAddress, StrictMode: true},
 			wantCode:    "400",
 			wantMsgFrag: "to",
 		},
@@ -245,7 +255,7 @@ func TestGetTransactionList_AddressValidation(t *testing.T) {
 func TestGetTransactionList_BlockNumberSilentlySkipped(t *testing.T) {
 	t.Parallel()
 
-	cases := []string{"-", "abc", "12345"}
+	cases := []string{testDashInput, testNonNumericInput, "12345"}
 	for _, bn := range cases {
 		bn := bn
 		t.Run(bn, func(t *testing.T) {
@@ -267,9 +277,9 @@ func TestGetBlockDetail_InvalidBlockNumber(t *testing.T) {
 		input string
 	}{
 		{"empty", ""},
-		{"dash sentinel", "-"},
+		{testDashSentinel, testDashInput},
 		{"negative", "-1"},
-		{"non-numeric", "abc"},
+		{testNonNumeric, testNonNumericInput},
 	}
 
 	for _, tc := range tests {

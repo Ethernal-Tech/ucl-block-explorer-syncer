@@ -16,6 +16,16 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
+const (
+	monthlyGranularityCase = "monthly granularity"
+	farPastEmptyCase       = "far past - should be empty"
+	farPastFromDay         = "2020-01-01"
+	farPastToDay           = "2020-01-02"
+	utcRangeCase           = "UTC range"
+	firstPageCase          = "pagination - page 1 size 1"
+	yesterdayOnlyCase      = "yesterday only"
+)
+
 func TestIntegration_ERC20Watchlist(t *testing.T) {
 	ts := framework.NewTestCluster(t,
 		framework.WithAPI(),
@@ -427,7 +437,7 @@ func TestIntegration_GetLineData(t *testing.T) {
 
 	t.Run("hourly", func(t *testing.T) {
 		resp, err := framework.Call[api_storage.LineDataResponse](
-			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: "hour"})
+			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: api_storage.TypeHour})
 		if err != nil {
 			t.Fatalf("getLineData hour failed: %v", err)
 		}
@@ -471,7 +481,7 @@ func TestIntegration_GetLineData(t *testing.T) {
 
 	t.Run("daily", func(t *testing.T) {
 		resp, err := framework.Call[api_storage.LineDataResponse](
-			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: "day"})
+			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: api_storage.TypeDay})
 		if err != nil {
 			t.Fatalf("getLineData day failed: %v", err)
 		}
@@ -517,7 +527,7 @@ func TestIntegration_GetLineData(t *testing.T) {
 
 	t.Run("daily distribution", func(t *testing.T) {
 		resp, err := framework.Call[api_storage.LineDataResponse](
-			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: "day"})
+			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: api_storage.TypeDay})
 		if err != nil {
 			t.Fatalf("getLineData day failed: %v", err)
 		}
@@ -545,7 +555,7 @@ func TestIntegration_GetLineData(t *testing.T) {
 
 	t.Run("zero days", func(t *testing.T) {
 		resp, err := framework.Call[api_storage.LineDataResponse](
-			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: "day"})
+			ts.API, "explorer_getLineData", api_storage.LineDataRequest{Type: api_storage.TypeDay})
 		if err != nil {
 			t.Fatalf("getLineData day failed: %v", err)
 		}
@@ -636,7 +646,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 		{
 			name: "hourly granularity today",
 			req: &api_storage.Erc20DailyStatsRequest{
-				Granularity: "hour",
+				Granularity: api_storage.TypeHour,
 				FromDay:     today,
 				ToDay:       tomorrow,
 				Page:        1,
@@ -674,9 +684,9 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "monthly granularity",
+			name: monthlyGranularityCase,
 			req: &api_storage.Erc20DailyStatsRequest{
-				Granularity: "month",
+				Granularity: api_storage.TypeMonth,
 				FromDay:     thisMonth,
 				ToDay:       nextMonth,
 				Page:        1,
@@ -800,10 +810,10 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "far past - should be empty",
+			name: farPastEmptyCase,
 			req: &api_storage.Erc20DailyStatsRequest{
-				FromDay:  "2020-01-01",
-				ToDay:    "2020-01-02",
+				FromDay:  farPastFromDay,
+				ToDay:    farPastToDay,
 				Page:     1,
 				PageSize: 50,
 			},
@@ -816,7 +826,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "UTC range",
+			name: utcRangeCase,
 			req: &api_storage.Erc20DailyStatsRequest{
 				FromUtc:  today + "T00:00:00Z",
 				ToUtc:    tomorrow + "T00:00:00Z",
@@ -832,7 +842,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "pagination - page 1 size 1",
+			name: firstPageCase,
 			req: &api_storage.Erc20DailyStatsRequest{
 				Page:     1,
 				PageSize: 1,
@@ -865,7 +875,7 @@ func TestIntegration_ERC20DailyStats(t *testing.T) {
 		{
 			name: "hourly with token filter verifies exact counts",
 			req: &api_storage.Erc20DailyStatsRequest{
-				Granularity:  "hour",
+				Granularity:  api_storage.TypeHour,
 				TokenAddress: tokenAddr,
 				FromDay:      today,
 				ToDay:        tomorrow,
@@ -1021,7 +1031,7 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 		{
 			name: "hourly granularity",
 			req: &api_storage.Erc20CirculationCumulativeRequest{
-				Granularity: "hour",
+				Granularity: api_storage.TypeHour,
 				FromDay:     today,
 				ToDay:       tomorrow,
 				Page:        1,
@@ -1054,9 +1064,9 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 			},
 		},
 		{
-			name: "monthly granularity",
+			name: monthlyGranularityCase,
 			req: &api_storage.Erc20CirculationCumulativeRequest{
-				Granularity: "month",
+				Granularity: api_storage.TypeMonth,
 				FromDay:     thisMonth,
 				ToDay:       nextMonth,
 				Page:        1,
@@ -1075,7 +1085,7 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 			},
 		},
 		{
-			name: "UTC range",
+			name: utcRangeCase,
 			req: &api_storage.Erc20CirculationCumulativeRequest{
 				FromUtc:  today + "T00:00:00Z",
 				ToUtc:    tomorrow + "T00:00:00Z",
@@ -1094,7 +1104,7 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 			},
 		},
 		{
-			name: "yesterday only",
+			name: yesterdayOnlyCase,
 			req: &api_storage.Erc20CirculationCumulativeRequest{
 				FromDay:  yesterday,
 				ToDay:    today,
@@ -1132,8 +1142,8 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 		{
 			name: "far past - no activity",
 			req: &api_storage.Erc20CirculationCumulativeRequest{
-				FromDay:  "2020-01-01",
-				ToDay:    "2020-01-02",
+				FromDay:  farPastFromDay,
+				ToDay:    farPastToDay,
 				Page:     1,
 				PageSize: 50,
 			},
@@ -1147,7 +1157,7 @@ func TestIntegration_ERC20CirculationCumulative(t *testing.T) {
 			},
 		},
 		{
-			name: "pagination - page 1 size 1",
+			name: firstPageCase,
 			req: &api_storage.Erc20CirculationCumulativeRequest{
 				FromDay:  today,
 				ToDay:    tomorrow,
@@ -2252,7 +2262,7 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 		{
 			name: "hourly granularity - peak hour has 3 entities",
 			req: &api_storage.EntityDailyStatsRequest{
-				Granularity: "hour",
+				Granularity: api_storage.TypeHour,
 				FromDay:     today,
 				ToDay:       tomorrow,
 				Page:        1,
@@ -2287,9 +2297,9 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "monthly granularity",
+			name: monthlyGranularityCase,
 			req: &api_storage.EntityDailyStatsRequest{
-				Granularity: "month",
+				Granularity: api_storage.TypeMonth,
 				FromDay:     thisMonth,
 				ToDay:       nextMonth,
 				Page:        1,
@@ -2318,7 +2328,7 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "UTC range",
+			name: utcRangeCase,
 			req: &api_storage.EntityDailyStatsRequest{
 				FromUtc:  today + "T00:00:00Z",
 				ToUtc:    tomorrow + "T00:00:00Z",
@@ -2334,7 +2344,7 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "yesterday only",
+			name: yesterdayOnlyCase,
 			req: &api_storage.EntityDailyStatsRequest{
 				FromDay:  yesterday,
 				ToDay:    yesterday,
@@ -2355,10 +2365,10 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "far past - should be empty",
+			name: farPastEmptyCase,
 			req: &api_storage.EntityDailyStatsRequest{
-				FromDay:  "2020-01-01",
-				ToDay:    "2020-01-02",
+				FromDay:  farPastFromDay,
+				ToDay:    farPastToDay,
 				Page:     1,
 				PageSize: 50,
 			},
@@ -2373,7 +2383,7 @@ func TestIntegration_ActiveEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "pagination - page 1 size 1",
+			name: firstPageCase,
 			req: &api_storage.EntityDailyStatsRequest{
 				FromDay:  today,
 				ToDay:    tomorrow,
@@ -2469,7 +2479,7 @@ func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
 		{
 			name: "hourly - first seen bucketed by first hour only",
 			req: &api_storage.EntityDailyStatsRequest{
-				Granularity: "hour",
+				Granularity: api_storage.TypeHour,
 				FromDay:     today,
 				ToDay:       tomorrow,
 				Page:        1,
@@ -2501,9 +2511,9 @@ func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "monthly granularity",
+			name: monthlyGranularityCase,
 			req: &api_storage.EntityDailyStatsRequest{
-				Granularity: "month",
+				Granularity: api_storage.TypeMonth,
 				FromDay:     thisMonth,
 				ToDay:       nextMonth,
 				Page:        1,
@@ -2524,7 +2534,7 @@ func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "yesterday only",
+			name: yesterdayOnlyCase,
 			req: &api_storage.EntityDailyStatsRequest{
 				FromDay:  yesterday,
 				ToDay:    yesterday,
@@ -2545,7 +2555,7 @@ func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "UTC range",
+			name: utcRangeCase,
 			req: &api_storage.EntityDailyStatsRequest{
 				FromUtc:  today + "T00:00:00Z",
 				ToUtc:    tomorrow + "T00:00:00Z",
@@ -2561,10 +2571,10 @@ func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "far past - should be empty",
+			name: farPastEmptyCase,
 			req: &api_storage.EntityDailyStatsRequest{
-				FromDay:  "2020-01-01",
-				ToDay:    "2020-01-02",
+				FromDay:  farPastFromDay,
+				ToDay:    farPastToDay,
 				Page:     1,
 				PageSize: 50,
 			},
@@ -2579,7 +2589,7 @@ func TestIntegration_OnboardingEntityDailyStats(t *testing.T) {
 			},
 		},
 		{
-			name: "pagination - page 1 size 1",
+			name: firstPageCase,
 			req: &api_storage.EntityDailyStatsRequest{
 				FromDay:  today,
 				ToDay:    tomorrow,
@@ -2713,7 +2723,7 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 		{
 			name: "hourly - per-hour breakdown",
 			req: &api_storage.ValidatorUtilizationRequest{
-				Granularity: "hour",
+				Granularity: api_storage.TypeHour,
 				FromDay:     today,
 				ToDay:       tomorrow,
 				Page:        1,
@@ -2756,7 +2766,7 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 		{
 			name: "utilization pct is correct",
 			req: &api_storage.ValidatorUtilizationRequest{
-				Granularity: "hour",
+				Granularity: api_storage.TypeHour,
 				FromDay:     today,
 				ToDay:       tomorrow,
 				Page:        1,
@@ -2820,9 +2830,9 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 			},
 		},
 		{
-			name: "monthly granularity",
+			name: monthlyGranularityCase,
 			req: &api_storage.ValidatorUtilizationRequest{
-				Granularity: "month",
+				Granularity: api_storage.TypeMonth,
 				FromDay:     thisMonth,
 				ToDay:       nextMonth,
 				Page:        1,
@@ -2851,7 +2861,7 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 			},
 		},
 		{
-			name: "yesterday only",
+			name: yesterdayOnlyCase,
 			req: &api_storage.ValidatorUtilizationRequest{
 				FromDay:  yesterday,
 				ToDay:    yesterday,
@@ -2931,10 +2941,10 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 			},
 		},
 		{
-			name: "far past - should be empty",
+			name: farPastEmptyCase,
 			req: &api_storage.ValidatorUtilizationRequest{
-				FromDay:  "2020-01-01",
-				ToDay:    "2020-01-02",
+				FromDay:  farPastFromDay,
+				ToDay:    farPastToDay,
 				Page:     1,
 				PageSize: 50,
 			},
@@ -2947,7 +2957,7 @@ func TestIntegration_ValidatorUtilization(t *testing.T) {
 			},
 		},
 		{
-			name: "pagination - page 1 size 1",
+			name: firstPageCase,
 			req: &api_storage.ValidatorUtilizationRequest{
 				FromDay:  today,
 				ToDay:    tomorrow,

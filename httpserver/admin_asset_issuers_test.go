@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+const testAdminAPISecret = "secret"
+
 func TestHandleAdminAssetIssuers_NoSecret(t *testing.T) {
 	t.Parallel()
 
@@ -26,7 +28,7 @@ func TestHandleAdminAssetIssuers_NoSecret(t *testing.T) {
 func TestHandleAdminAssetIssuers_WrongToken(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret"}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/asset-issuers",
 		strings.NewReader(`{"name":"test"}`))
@@ -42,7 +44,7 @@ func TestHandleAdminAssetIssuers_WrongToken(t *testing.T) {
 func TestHandleAdminAssetIssuers_MissingToken(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret"}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/asset-issuers",
 		strings.NewReader(`{"name":"test"}`))
@@ -57,7 +59,7 @@ func TestHandleAdminAssetIssuers_MissingToken(t *testing.T) {
 func TestHandleAdminAssetIssuers_NoDB(t *testing.T) {
 	t.Parallel()
 
-	s := &Server{cfg: Config{AdminAPISecret: "secret", DB: nil}}
+	s := &Server{cfg: Config{AdminAPISecret: testAdminAPISecret, DB: nil}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/asset-issuers",
 		strings.NewReader(`{"name":"test"}`))

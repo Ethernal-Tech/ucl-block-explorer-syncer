@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+const (
+	testFromUTC     = "2024-01-01T00:00:00Z"
+	testToUTC       = "2024-01-02T00:00:00Z"
+	testInvalidDate = "not-a-date"
+)
+
 func TestNormalizeGranularity(t *testing.T) {
 	t.Parallel()
 
@@ -14,14 +20,14 @@ func TestNormalizeGranularity(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"hour lowercase", "hour", TypeHour},
-		{"day lowercase", "day", TypeDay},
-		{"month lowercase", "month", TypeMonth},
+		{"hour lowercase", TypeHour, TypeHour},
+		{"day lowercase", TypeDay, TypeDay},
+		{"month lowercase", TypeMonth, TypeMonth},
 		{"hour uppercase", "HOUR", TypeHour},
 		{"day mixed case", "Day", TypeDay},
 		{"month mixed case", "MONTH", TypeMonth},
 		{"whitespace around", "  month  ", TypeMonth},
-		{"unknown defaults to day", "week", TypeDay},
+		{"unknown defaults to day", testUnknownGranularity, TypeDay},
 		{"empty defaults to day", "", TypeDay},
 		{"random string", "xyz", TypeDay},
 	}
@@ -46,12 +52,12 @@ func TestDateTruncField(t *testing.T) {
 		gran string
 		want string
 	}{
-		{TypeHour, "hour"},
-		{TypeDay, "day"},
-		{TypeMonth, "month"},
-		{"week", "day"},
-		{"", "day"},
-		{"HOUR", "day"}, // not normalized — caller must normalize first
+		{TypeHour, TypeHour},
+		{TypeDay, TypeDay},
+		{TypeMonth, TypeMonth},
+		{testUnknownGranularity, TypeDay},
+		{"", TypeDay},
+		{"HOUR", TypeDay}, // not normalized — caller must normalize first
 	}
 
 	for _, tc := range tests {
@@ -115,45 +121,45 @@ func TestParseStatsTimeRange_UTCPair(t *testing.T) {
 	}{
 		{
 			name:     "valid pair",
-			fromUtc:  "2024-01-01T00:00:00Z",
-			toUtc:    "2024-01-02T00:00:00Z",
+			fromUtc:  testFromUTC,
+			toUtc:    testToUTC,
 			wantFrom: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 			wantTo:   time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC),
 		},
 		{
 			name:      "only fromUtc set",
-			fromUtc:   "2024-01-01T00:00:00Z",
+			fromUtc:   testFromUTC,
 			toUtc:     "",
 			wantErrIn: "",
 		},
 		{
 			name:      "only toUtc set",
 			fromUtc:   "",
-			toUtc:     "2024-01-02T00:00:00Z",
+			toUtc:     testToUTC,
 			wantErrIn: "",
 		},
 		{
 			name:      "from after to",
-			fromUtc:   "2024-01-02T00:00:00Z",
-			toUtc:     "2024-01-01T00:00:00Z",
+			fromUtc:   testToUTC,
+			toUtc:     testFromUTC,
 			wantErrIn: "before",
 		},
 		{
 			name:      "from equal to",
-			fromUtc:   "2024-01-01T00:00:00Z",
-			toUtc:     "2024-01-01T00:00:00Z",
+			fromUtc:   testFromUTC,
+			toUtc:     testFromUTC,
 			wantErrIn: "before",
 		},
 		{
 			name:      "invalid fromUtc format",
-			fromUtc:   "not-a-date",
-			toUtc:     "2024-01-02T00:00:00Z",
+			fromUtc:   testInvalidDate,
+			toUtc:     testToUTC,
 			wantErrIn: "fromUtc",
 		},
 		{
 			name:      "invalid toUtc format",
-			fromUtc:   "2024-01-01T00:00:00Z",
-			toUtc:     "not-a-date",
+			fromUtc:   testFromUTC,
+			toUtc:     testInvalidDate,
 			wantErrIn: "toUtc",
 		},
 	}
@@ -222,7 +228,7 @@ func TestParseStatsTimeRange_DayPair(t *testing.T) {
 		},
 		{
 			name:      "invalid fromDay",
-			fromDay:   "not-a-date",
+			fromDay:   testInvalidDate,
 			toDay:     "2024-01-05",
 			wantErrIn: "fromDay",
 		},
@@ -308,14 +314,14 @@ func TestParseOptionalStatsTimeRange(t *testing.T) {
 		},
 		{
 			name:     "valid UTC pair",
-			fromUtc:  "2024-01-01T00:00:00Z",
+			fromUtc:  testFromUTC,
 			toUtc:    "2024-01-31T00:00:00Z",
 			wantFrom: ptr(d(2024, 1, 1)),
 			wantTo:   ptr(d(2024, 1, 31)),
 		},
 		{
 			name:      "only fromUtc - error",
-			fromUtc:   "2024-01-01T00:00:00Z",
+			fromUtc:   testFromUTC,
 			wantErrIn: "",
 		},
 		{

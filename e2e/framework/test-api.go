@@ -13,6 +13,11 @@ import (
 	"time"
 )
 
+const (
+	jsonNameKey   = "name"
+	jsonRegionKey = "region"
+)
+
 type API struct {
 	node     *node
 	config   ApiConfig
@@ -51,6 +56,10 @@ func (a *API) Start() {
 		args = append(args, "--admin-api-secret", a.config.AdminSecret)
 	}
 
+	if a.config.NodeRPC != "" {
+		args = append(args, "--node-rpc", a.config.NodeRPC)
+	}
+
 	n, err := newNode("go", args, f, "..")
 	if err != nil {
 		a.t.Fatalf("failed to start api: %v", err)
@@ -80,6 +89,10 @@ func (a *API) IsRunning() bool {
 
 func (a *API) URL() string {
 	return fmt.Sprintf("http://%s", a.config.Listen)
+}
+
+func (a *API) doRequest(req *http.Request) (*http.Response, error) {
+	return http.DefaultClient.Do(req) //nolint:gosec // e2e harness only calls the local test API
 }
 
 func (a *API) waitReady(timeout time.Duration) {
@@ -120,7 +133,7 @@ func (a *API) AddERC20ToWatchlist(address, symbol string, decimals int, secret s
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to add erc20 to watchlist: %v", err)
 	}
@@ -151,7 +164,7 @@ func (a *API) RemoveERC20FromWatchlist(address, secret string) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to remove erc20 from watchlist: %v", err)
 	}
@@ -166,9 +179,9 @@ func (a *API) RemoveERC20FromWatchlist(address, secret string) {
 
 func (a *API) UpsertValidator(address, name, institution, region, secret string) {
 	body, err := json.Marshal(map[string]interface{}{
-		"name":        name,
+		jsonNameKey:   name,
 		"institution": institution,
-		"region":      region,
+		jsonRegionKey: region,
 	})
 	if err != nil {
 		a.t.Fatalf("failed to marshal validator request: %v", err)
@@ -184,7 +197,7 @@ func (a *API) UpsertValidator(address, name, institution, region, secret string)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to upsert validator: %v", err)
 	}
@@ -206,7 +219,7 @@ func (a *API) DeleteValidator(address, secret string) {
 
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to delete validator: %v", err)
 	}
@@ -220,11 +233,11 @@ func (a *API) DeleteValidator(address, secret string) {
 
 func (a *API) CreateAssetIssuer(name, website, contact, region, secret string, assets []string) string {
 	body, err := json.Marshal(map[string]interface{}{
-		"name":    name,
-		"website": website,
-		"contact": contact,
-		"region":  region,
-		"assets":  assets,
+		jsonNameKey:   name,
+		"website":     website,
+		"contact":     contact,
+		jsonRegionKey: region,
+		"assets":      assets,
 	})
 	if err != nil {
 		a.t.Fatalf("failed to marshal asset issuer request: %v", err)
@@ -240,7 +253,7 @@ func (a *API) CreateAssetIssuer(name, website, contact, region, secret string, a
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to create asset issuer: %v", err)
 	}
@@ -265,11 +278,11 @@ func (a *API) CreateAssetIssuer(name, website, contact, region, secret string, a
 
 func (a *API) UpdateAssetIssuer(id, name, website, contact, region, secret string, assets []string) {
 	body, err := json.Marshal(map[string]interface{}{
-		"name":    name,
-		"website": website,
-		"contact": contact,
-		"region":  region,
-		"assets":  assets,
+		jsonNameKey:   name,
+		"website":     website,
+		"contact":     contact,
+		jsonRegionKey: region,
+		"assets":      assets,
 	})
 	if err != nil {
 		a.t.Fatalf("failed to marshal asset issuer request: %v", err)
@@ -285,7 +298,7 @@ func (a *API) UpdateAssetIssuer(id, name, website, contact, region, secret strin
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to update asset issuer: %v", err)
 	}
@@ -307,7 +320,7 @@ func (a *API) DeleteAssetIssuer(id, secret string) {
 
 	req.Header.Set("Authorization", "Bearer "+secret)
 
-	resp, err := http.DefaultClient.Do(req) //nolint:gosec
+	resp, err := a.doRequest(req)
 	if err != nil {
 		a.t.Fatalf("failed to delete asset issuer: %v", err)
 	}

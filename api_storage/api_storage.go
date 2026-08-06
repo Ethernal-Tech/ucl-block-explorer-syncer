@@ -28,6 +28,11 @@ var (
 	errDBConnectionFailed = errors.New("database connection failed")
 )
 
+// IsDBConnectionFailed reports whether err is the package "DB not configured" sentinel.
+func IsDBConnectionFailed(err error) bool {
+	return errors.Is(err, errDBConnectionFailed)
+}
+
 // normalizeMaxBlockNumber maps empty, UI sentinels ("-"), and non-numeric values to the
 // default upper bound so PostgreSQL always receives a valid BIGINT.
 func normalizeMaxBlockNumber(s string) string {
