@@ -1216,6 +1216,7 @@ func TestE2E_SyncerReconnectsAfterNodeOutage(t *testing.T) {
 		t,
 		framework.WithLogging(),
 		framework.WithFullBlock(),
+		framework.WithNumOfRetries(100),
 		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
 
 	defer testCluster.Stop()
@@ -1285,6 +1286,7 @@ func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
 		framework.WithLogging(),
 		framework.WithFullBlock(),
 		framework.WithEoaActivity(),
+		framework.WithNumOfRetries(100),
 		framework.WithUclFlags("write-logs", "--premine", funderAddr.String()),
 	)
 	defer testCluster.Stop()
