@@ -65,9 +65,8 @@ go build -o ucl-block-explorer-syncer .
 | `--sync-tx-pool` | | Index mempool txs via `txpool_content`. |
 | `--tx-pool-poll-interval` | | Mempool poll interval in ms (default `2000`). |
 | `--erc20-stats` | | After each committed block, decode ERC-20 `Transfer` logs for tokens in `chain.erc20_watchlist` and upsert **UTC-hour** counts/volumes in `chain.erc20_hourly_stats` (non-blocking queue; requires receipt logs from the node). |
-| `--erc20-stats-buffer` | | Max queued ERC-20 block jobs (default `64`); if full, newer jobs are dropped and logged. |
-| `--entity-stats` | | After each block, upsert `chain.entity_hour_participation` (active EOAs per hour) and `chain.eoa_first_seen` (onboarding EOAs). Both exclude contract addresses using `eth_getCode` at the block. Requires **`--full-block`** so `from`/`to` are stored. |
-| `--entity-stats-buffer` | | Max queued entity-stats jobs (default `64`); if full, blocks are dropped and logged. |
+| `--eoa-activity-stats` | | Enable EOA activity tracking, recording the UTC hours in which each EOA address participated in a transaction. Requires **`--full-block`** so `from`/`to` are stored. |
+| `--eoa-activity-process-interval` | | How often the syncer retries processing a block for EOA activity when it is not yet available, in milliseconds (default `2000`). |
 
 **ERC-20 stats:** Populate `chain.erc20_watchlist` with token contract addresses (`enabled = true`). The indexer classifies **mint** (`from` = zero address), **burn** (`to` = zero address), and **transfer** (otherwise) using standard `Transfer` events only—not internal calls without logs. Volumes are raw uint256 sums (`NUMERIC` strings in the API). Buckets are **UTC hours** from the block timestamp (`erc20_hourly_stats.hour_utc`).
 
@@ -91,7 +90,7 @@ go build -o ucl-block-explorer-syncer .
 
 **`explorer_*` methods:** `explorer_getBlockList`, `explorer_getBlockDetail`, `explorer_getLineData`, `explorer_getTransactionList`, `explorer_getTransactionByHash`, `explorer_getBlockTransactionCount`, `explorer_getErc20DailyStats`, `explorer_getErc20CirculationCumulative`, `explorer_getErc20Watchlist`, `explorer_getActiveEntityDailyStats`, `explorer_getOnboardingEntityDailyStats`.
 
-**Entity / adoption stats:** JSON `fromDay`, `toDay`, optional `fromUtc`/`toUtc` (RFC3339), optional **`granularity`**: `hour` \| `day` \| `month` (default `day`), `page`, `pageSize`. Response `data.list[]` has `bucketUtc`, `dayUtc`, and `count`. Hour granularity requires a bounded window (`fromUtc`/`toUtc` or both `fromDay` and `toDay`). Filled when the syncer runs with **`--entity-stats`** (and schema from `scripts/init.sql`).
+**Entity / adoption stats:** JSON `fromDay`, `toDay`, optional `fromUtc`/`toUtc` (RFC3339), optional **`granularity`**: `hour` \| `day` \| `month` (default `day`), `page`, `pageSize`. Response `data.list[]` has `bucketUtc`, `dayUtc`, and `count`. Hour granularity requires a bounded window (`fromUtc`/`toUtc` or both `fromDay` and `toDay`). Filled when the syncer runs with **`--eoa-activity-stats`** (and schema from `scripts/init.sql`).
 
 **ERC-20 transfer stats (`explorer_getErc20DailyStats`):** Same optional `granularity` and time fields; aggregates from **`chain.erc20_hourly_stats`**.
 
@@ -118,7 +117,7 @@ Compose starts **PostgreSQL**, the **sync** job, and the **api** service on port
 
 Point the frontend at `http://localhost:8545` for explorer JSON-RPC (or your published host/port). The syncer uses `RPC_URL` to reach the chain node; the API service only talks to Postgres.
 
-The Compose **syncer** runs with **`--tx-workers`** (default **8**, override **`TX_WORKERS`** in `.env`), **`--full-block`**, **`--erc20-stats`**, and **`--entity-stats`**: full transactions are stored (needed for adoption stats), ERC-20 `Transfer` logs are aggregated per watchlist token, and per-hour **active** (EOAs only) / **onboarding** entity tables are updated (`eth_getCode` excludes contracts for both). Populate **`chain.erc20_watchlist`** for tokens you care about (SQL, or set **`ADMIN_API_SECRET`** in `.env` and use **`POST /admin/v1/erc20/watchlist`** on the API); without watchlist rows the ERC-20 worker no-ops. Override queue depth with **`ERC20_STATS_BUFFER`** or **`ENTITY_STATS_BUFFER`** in `.env` if needed.
+The Compose **syncer** runs with **`--tx-workers`** (default **8**, override **`TX_WORKERS`** in `.env`), **`--full-block`**, **`--erc20-stats`**, and **`--eoa-activity-stats`**: full transactions are stored (needed for adoption stats), ERC-20 `Transfer` logs are aggregated per watchlist token, and the UTC hours in which each EOA participated in a transaction are recorded. Populate **`chain.erc20_watchlist`** for tokens you care about (SQL, or set **`ADMIN_API_SECRET`** in `.env` and use **`POST /admin/v1/erc20/watchlist`** on the API); without watchlist rows the ERC-20 worker no-ops. Override the EOA activity retry interval with **`EOA_ACTIVITY_PROCESS_INTERVAL`** in `.env` if needed.
 
 ## Project layout
 
