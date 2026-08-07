@@ -43,11 +43,9 @@ services:
       - "${TX_WORKERS:-8}"
       - "--full-block"
       - "--erc20-stats"
-      - "--erc20-stats-buffer"
-      - "${ERC20_STATS_BUFFER:-64}"
-      - "--entity-stats"
-      - "--entity-stats-buffer"
-      - "${ENTITY_STATS_BUFFER:-64}"
+      - "--eoa-activity-stats"
+      - "--eoa-activity-process-interval"
+      - "${EOA_ACTIVITY_PROCESS_INTERVAL:-2000}"
 
   # Same image as syncer; no `build` here (avoids duplicate export of the same tag).
   api:
