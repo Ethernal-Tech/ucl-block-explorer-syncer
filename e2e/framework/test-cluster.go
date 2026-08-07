@@ -110,6 +110,18 @@ func WithAPI() Option {
 	}
 }
 
+func WithNumOfRetries(numOfRetries uint64) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.NumberOfRetries = numOfRetries
+	}
+}
+
+func WithRetryInterval(retryInterval uint64) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.RetryInterval = retryInterval
+	}
+}
+
 func NewTestCluster(t *testing.T, opts ...Option) *TestCluster {
 	t.Helper()
 
@@ -212,6 +224,7 @@ func (tc *TestCluster) initLogsDir() {
 }
 
 func (tc *TestCluster) RestartSyncer(newRpcUrl string) {
+	tc.Syncer.Stop()
 	tc.Syncer.config.RpcUrl = newRpcUrl
 	tc.Syncer.Start()
 }

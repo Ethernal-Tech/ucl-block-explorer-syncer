@@ -64,6 +64,10 @@ func (s *Syncer) buildArgs() []string {
 		"--poll-interval", strconv.FormatUint(s.config.PollInterval, 10),
 		"--batch-size", strconv.FormatUint(s.config.BatchSize, 10),
 		"--tx-workers", strconv.FormatUint(s.config.TxWorkers, 10),
+		"--max-retries", strconv.FormatUint(s.config.NumberOfRetries, 10),
+		"--retry-interval", strconv.FormatUint(s.config.RetryInterval, 10),
+
+		// "--metrics-addr", "",
 	}
 
 	if s.config.Logging {

@@ -26,6 +26,8 @@ var (
 	fullBlock                   bool
 	batchSize                   uint64
 	txWorkers                   uint64
+	maxRetries                  int64
+	retryInterval               uint64
 	erc20Stats                  bool
 	erc20WatchlistCheckInterval uint64
 	erc20StartFromTip           bool
@@ -87,6 +89,12 @@ func setOptionalFlags() {
 
 	syncerCommand.Flags().Uint64VarP(&txWorkers, "tx-workers", "w", 1,
 		"(maximum) number of concurrent goroutines used to fetch transaction data")
+
+	syncerCommand.Flags().Int64Var(&maxRetries, "max-retries", -1,
+		"maximum number of attempts to fetch blockchain data before giving up and shutting down; -1 retries indefinitely")
+
+	syncerCommand.Flags().Uint64Var(&retryInterval, "retry-interval", 5000,
+		"interval in milliseconds between two consecutive retry attempts on failure")
 
 	syncerCommand.Flags().BoolVar(&erc20Stats, "erc20-stats", false,
 		"enable ERC-20 statistics aggregation for watchlisted tokens (mint, burn, transfer counts and volumes per UTC hour)")
@@ -170,6 +178,7 @@ func execute(cmd *cobra.Command, args []string) error {
 		syncer.WithPollInterval(pollInterval),
 		syncer.WithBatchSize(batchSize),
 		syncer.WithMaxTxWorkers(txWorkers),
+		syncer.WithRetry(maxRetries, retryInterval),
 		syncer.WithBlockWorkerStartBlock(*bwStartBlock),
 		syncer.WithTransactionkWorkerStartBlock(*txwStartBlock),
 		syncer.WithMetrics(metricsAddr),

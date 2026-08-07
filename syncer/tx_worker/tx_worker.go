@@ -49,8 +49,13 @@ type TxWorker struct {
 	// being closed.
 	doneCh chan<- uint64
 
-	// jobCh is the channel through which the worker receives jobs. Closing this channel signals
-	// the worker to stop processing and shut down gracefully.
+	// jobCh is the channel through which the worker receives jobs. Sending to this channel while
+	// a previous job's completion has not been acknowledged via [TxWorker.doneCh] may result in
+	// undefined behavior. Closing this channel signals the worker to stop processing and shut
+	// down gracefully. Closing the channel can always be done safely without waiting for the
+	// current job to complete, which is particularly useful when [TxWorker.maxRetries] is set
+	// to a large value or indefinitely (-1) and [TxWorker.retryInterval] is high, as waiting
+	// for the job to finish (successfully or with an error) may take a long time.
 	jobCh <-chan TxJob
 
 	// errCh is the channel on which the worker sends an error upon encountering a fatal failure.
@@ -126,7 +131,7 @@ func NewTxWorker(
 		doneCh:        doneCh,
 		jobCh:         jobCh,
 		errCh:         errCh,
-		maxRetries:    1,
+		maxRetries:    100,
 		retryInterval: 2000,
 		batchSize:     1,
 	}
@@ -157,6 +162,7 @@ func (w *TxWorker) Start() error {
 	go func() {
 		w.log("started")
 
+	main_loop:
 		for job := range w.jobCh {
 			txs := job.Block.Transactions[job.From:job.To]
 
@@ -165,7 +171,7 @@ func (w *TxWorker) Start() error {
 			for _, tx := range txs {
 				// Fetch full transaction data only if fetchTxDataFn approves.
 				if w.fetchTxDataFn(tx.Hash) {
-					if err := w.fetchBatch(&batch, rpc.BatchElem{
+					if ok, err := w.fetchBatch(&batch, rpc.BatchElem{
 						Method: "eth_getTransactionByHash",
 						Args:   []any{tx.Hash},
 						Result: tx,
@@ -173,11 +179,13 @@ func (w *TxWorker) Start() error {
 						w.shutDown(err)
 
 						return
+					} else if !ok {
+						break main_loop
 					}
 				}
 
 				// Transaction receipt is always fetched.
-				if err := w.fetchBatch(&batch, rpc.BatchElem{
+				if ok, err := w.fetchBatch(&batch, rpc.BatchElem{
 					Method: "eth_getTransactionReceipt",
 					Args:   []any{tx.Hash},
 					Result: tx,
@@ -185,15 +193,19 @@ func (w *TxWorker) Start() error {
 					w.shutDown(err)
 
 					return
+				} else if !ok {
+					break main_loop
 				}
 			}
 
 			// Flush any remaining batch elements that didn't reach batchSize.
 			if len(batch) > 0 {
-				if err := w.sendBatch(batch); err != nil {
+				if ok, err := w.sendBatch(batch); err != nil {
 					w.shutDown(err)
 
 					return
+				} else if !ok {
+					break main_loop
 				}
 
 				batch = batch[:0]
@@ -241,25 +253,35 @@ func (w *TxWorker) log(str string, args ...any) {
 	}
 }
 
-// fetchBatch appends element to the batch and sends it once it reaches [TxWorker.batchSize].
-func (w *TxWorker) fetchBatch(batch *[]rpc.BatchElem, elem rpc.BatchElem) error {
+// fetchBatch is responsible for fetching data through a batch RPC call. Fetching is deferred
+// until a sufficient number of elements is reached (as defined by [TxWorker.batchSize]). In
+// that case only the element is added to the batch. The first return value indicates whether
+// the batch fetching was successful (see [TxWorker.sendBatch] for possible scenarios). Note
+// that deferred fetching (currently not enough elements to fill the batch) is also considered
+// a valid case, so (true, nil) is returned in that case as well.
+func (w *TxWorker) fetchBatch(batch *[]rpc.BatchElem, elem rpc.BatchElem) (bool, error) {
 	*batch = append(*batch, elem)
 
 	if uint64(len(*batch)) < w.batchSize {
-		return nil
+		return true, nil
 	}
 
-	if err := w.sendBatch(*batch); err != nil {
-		return err
+	ok, err := w.sendBatch(*batch)
+	if !ok || err != nil {
+		return ok, err
 	}
 
 	*batch = (*batch)[:0]
 
-	return nil
+	return true, nil
 }
 
-// sendBatch executes the batch RPC call, retrying on failure up to maxRetries times.
-func (w *TxWorker) sendBatch(batch []rpc.BatchElem) error {
+// sendBatch executes the batch RPC call, retrying on failure up to [TxWorker.maxRetries] times.
+// The first return value indicates whether the batch call was successful. Possible returns:
+//  1. (true, nil)  - batch call was successful.
+//  2. (false, nil) - batch call was not successful; [TxWorker.jobCh] was closed during a retry.
+//  3. (false, err) - batch call was not successful; [TxWorker.maxRetries] was reached.
+func (w *TxWorker) sendBatch(batch []rpc.BatchElem) (bool, error) {
 	for i := int64(1); ; i++ {
 		if err := w.client.BatchCallContext(context.TODO(), batch); err != nil {
 			w.log("(batch) RPC call failed: %v", err)
@@ -268,21 +290,30 @@ func (w *TxWorker) sendBatch(batch []rpc.BatchElem) error {
 			if i == w.maxRetries {
 				w.log("giving up...")
 
-				return fmt.Errorf("cannot execute (batch) RPC call: %w", err)
+				return false, fmt.Errorf("cannot execute (batch) RPC call: %w", err)
 			}
 
-			time.Sleep(time.Duration(w.retryInterval))
+			select {
+			case <-w.jobCh:
+				// jobCh guarantees that only closing is valid while a job is in progress
+				// (sending would cause undefined behavior), so receiving here always means
+				// the channel was closed and the worker should shut down gracefully.
+				return false, nil
+			case <-time.After(time.Duration(w.retryInterval) * time.Millisecond):
+			}
 
 			continue
 		}
 
-		// This should never happen! Log and continue.
-		for _, elem := range batch {
-			if elem.Error != nil {
-				w.log("%s RPC call failed for %v: %v", elem.Method, elem.Args[0], elem.Error)
-			}
-		}
-
-		return nil
+		break
 	}
+
+	// This should never happen! Log and proceed.
+	for _, elem := range batch {
+		if elem.Error != nil {
+			w.log("%s RPC call failed for %v: %v", elem.Method, elem.Args[0], elem.Error)
+		}
+	}
+
+	return true, nil
 }

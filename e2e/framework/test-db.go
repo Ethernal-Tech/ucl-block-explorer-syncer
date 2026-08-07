@@ -794,3 +794,63 @@ func (d *DB) InsertEOAActivity(t *testing.T, address string, hourUtc time.Time) 
 		t.Fatalf("InsertEOAActivity: failed to insert for address %s at %s: %v", address, hourUtc, err)
 	}
 }
+
+// MissingBlocks returns block numbers in the inclusive range [from, to] that are
+// not present in chain.blocks. Used to detect a syncer that jumped to `latest`
+// after reconnecting instead of backfilling blocks it missed.
+func (d *DB) MissingBlocks(t *testing.T, from, to uint64) []uint64 {
+	t.Helper()
+
+	rows, err := d.conn.QueryContext(context.TODO(), `
+		SELECT s.n
+		FROM generate_series($1::bigint, $2::bigint) AS s(n)
+		LEFT JOIN chain.blocks b ON b.number = s.n
+		WHERE b.number IS NULL
+		ORDER BY s.n
+	`, from, to)
+	if err != nil {
+		t.Fatalf("failed to query missing blocks in range [%d, %d]: %s", from, to, err)
+	}
+
+	defer rows.Close() //nolint:errcheck
+
+	var missing []uint64
+
+	for rows.Next() {
+		var n uint64
+
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("failed to scan missing block number: %s", err)
+		}
+
+		missing = append(missing, n)
+	}
+
+	if err := rows.Err(); err != nil {
+		t.Fatalf("failed to scan missing block rows: %s", err)
+	}
+
+	return missing
+}
+
+// WaitForEOABlock blocks until the syncer's EOA-activity processing has covered
+// the given block, or the timeout expires. Mirrors WaitForBlock/WaitForERC20Block.
+func (d *DB) WaitForEOABlock(t *testing.T, block uint64, timeout time.Duration) error {
+	t.Helper()
+
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		last, err := d.GetLastProcessedEOAActivityBlock(t)
+		if err != nil {
+			return err
+		}
+
+		if last != nil && *last > block {
+			return nil
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	return fmt.Errorf("timeout: eoa activity did not reach block %d within %s", block, timeout)
+}

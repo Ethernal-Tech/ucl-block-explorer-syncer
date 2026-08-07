@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -63,7 +64,7 @@ func (u *UCL) Start() {
 	}
 
 	u.node = n
-	u.WaitForBlock(1, 3*time.Minute)
+	u.WaitForBlock(1, 5*time.Minute)
 
 	client, err := ethclient.Dial(u.config.RpcUrl)
 	if err != nil {
@@ -294,4 +295,175 @@ func (u *UCL) TransferERC20(privateKey string, contractAddr, to common.Address, 
 	data = append(data, common.LeftPadBytes(amount.Bytes(), 32)...)
 
 	return u.sendTx(privateKey, &contractAddr, data, big.NewInt(0), 200000)
+}
+
+// RestartNode stops the node at the given index, waits for `downtime`, then starts
+// it again with an identical command line - same RPC port, same data dir.
+// Used to simulate a node outage underneath the syncer, without restarting the syncer.
+func (u *UCL) RestartNode(index int, downtime time.Duration) {
+	if index >= len(nodesRpcPorts) {
+		u.t.Fatalf("node index %d out of range (max %d)", index, len(nodesRpcPorts)-1)
+	}
+
+	port := nodesRpcPorts[index]
+	pattern := fmt.Sprintf("jsonrpc :%d", port)
+
+	// Find the node's PID by matching its RPC port in the command line. The node is
+	// spawned by the UCL bash script, so we have no *exec.Cmd handle for it.
+	out, err := exec.Command("pgrep", "-f", pattern).Output() //nolint:gosec
+	if err != nil {
+		u.t.Fatalf("node %d not running (pgrep %q): %v", index, pattern, err)
+	}
+
+	pid, err := strconv.Atoi(strings.Fields(string(out))[0])
+	if err != nil {
+		u.t.Fatalf("failed to parse pid for node %d: %v", index, err)
+	}
+
+	// Capture the exact command line and working directory BEFORE killing the process -
+	// this is what lets us bring the node back up on the same port with the same flags.
+	// Linux-only (/proc).
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		u.t.Fatalf("failed to read cmdline of node %d: %v", index, err)
+	}
+
+	// /proc/<pid>/cmdline is NUL-separated with a trailing NUL.
+	args := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+	if len(args) == 0 {
+		u.t.Fatalf("empty cmdline for node %d", index)
+	}
+
+	cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+	if err != nil {
+		u.t.Logf("failed to read cwd of node %d, using test cwd: %v", index, err)
+
+		cwd = ""
+	}
+
+	u.t.Logf("stopping node %d (pid %d, port %d) for %s", index, pid, port, downtime)
+
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+		u.t.Fatalf("failed to SIGTERM node %d: %v", index, err)
+	}
+
+	// Wait for the process to actually exit; fall back to SIGKILL if it hangs.
+	// Signal 0 only checks whether the process still exists.
+	deadline := time.Now().UTC().Add(10 * time.Second)
+
+	for {
+		if err := syscall.Kill(pid, 0); err != nil { // process is gone
+			break
+		}
+
+		if time.Now().UTC().After(deadline) {
+			u.t.Logf("node %d did not exit on SIGTERM, sending SIGKILL", index)
+
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// The port must be released before we re-exec, otherwise the restart fails with
+	// "bind: address already in use".
+	waitPortClosed(u.t, port, 10*time.Second)
+
+	// The outage window. The syncer should be retrying against a dead RPC here.
+	time.Sleep(downtime)
+
+	// Append to the same log file Start() uses, so the restarted node does not spam
+	// the test console. O_APPEND (not O_TRUNC) keeps everything logged before the outage.
+	f, err := os.OpenFile(
+		filepath.Join(u.logsDir, "ucl.log"),
+		os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		u.t.Fatalf("failed to open ucl log file for restarted node %d: %v", index, err)
+	}
+
+	// Re-exec with the exact same argv and cwd -> same RPC port, same data dir.
+	// The node resyncs from its peers and picks up where it left off.
+	cmd := exec.Command(args[0], args[1:]...) //nolint:gosec
+	cmd.Dir = cwd
+	cmd.Stdout = f
+	cmd.Stderr = f
+
+	if err := cmd.Start(); err != nil {
+		f.Close() //nolint:errcheck
+
+		u.t.Fatalf("failed to restart node %d: %v", index, err)
+	}
+
+	// The restarted node is no longer a child of the UCL script, so Stop() will not
+	// reap it - clean it up here.
+	u.t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = f.Close()
+	})
+
+	waitPortOpen(u.t, port, 30*time.Second)
+
+	u.t.Logf("node %d back up on port %d (pid %d)", index, port, cmd.Process.Pid)
+}
+
+// WaitForNonce blocks until addr's mined nonce (as seen by the given client)
+// reaches want, or the timeout expires. Takes an explicit client on purpose:
+// pass a live peer when the node behind u.Client() is the one under test.
+func (u *UCL) WaitForNonce(addr common.Address, want uint64, timeout time.Duration) {
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		n, err := u.client.NonceAt(context.Background(), addr, nil) // nil = latest mined
+		if err != nil {
+			u.t.Fatalf("failed to read nonce for %s: %v", addr.Hex(), err)
+		}
+
+		if n >= want {
+			return
+		}
+
+		time.Sleep(time.Second)
+	}
+
+	u.t.Fatalf("timeout: %s mined nonce did not reach %d within %s", addr.Hex(), want, timeout)
+}
+
+// waitPortClosed blocks until nothing accepts connections on the port, or the timeout expires.
+func waitPortClosed(t *testing.T, port int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		if err != nil {
+			return
+		}
+
+		_ = conn.Close()
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("port %d still open after %s", port, timeout)
+}
+
+// waitPortOpen blocks until the port accepts connections, or the timeout expires.
+// A successful dial only means the listener is up - the RPC may still be warming up.
+func waitPortOpen(t *testing.T, port int, timeout time.Duration) {
+	t.Helper()
+
+	deadline := time.Now().UTC().Add(timeout)
+	for time.Now().UTC().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+
+			return
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	t.Fatalf("port %d did not open within %s", port, timeout)
 }

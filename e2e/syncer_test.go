@@ -19,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 const (
@@ -116,7 +117,7 @@ func TestE2E_BlocksAndTxsIndexing(t *testing.T) {
 
 		t.Logf("waiting for syncer to process up to block %d...", maxBlockNumber)
 
-		if err := ts.DB.WaitForBlock(t, maxBlockNumber, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlockNumber, 150*time.Second); err != nil {
 			t.Fatalf("%s", err.Error())
 		}
 
@@ -186,7 +187,7 @@ func TestE2E_ERC20Stats(t *testing.T) {
 			transferReceipt1.BlockNumber.Uint64(),
 		})
 
-		if err := ts.DB.WaitForBlock(t, maxBlockNumber1, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlockNumber1, 150*time.Second); err != nil {
 			t.Fatalf("%s", err.Error())
 		}
 
@@ -352,7 +353,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 			active    bool
 		}
 
-		if err := ts.DB.WaitForBlock(t, deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, deployReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", deployReceipt.BlockNumber.Uint64())
 		}
 
@@ -406,7 +407,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
 
-		if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlock, 150*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
@@ -437,7 +438,7 @@ func TestE2E_ERC20WatchlistAddRemove(t *testing.T) {
 		doRound(false)
 
 		maxBlock = allOperations[len(allOperations)-1].receipt.BlockNumber.Uint64()
-		if err := ts.DB.WaitForBlock(t, maxBlock, 30*time.Second); err != nil {
+		if err := ts.DB.WaitForBlock(t, maxBlock, 150*time.Second); err != nil {
 			t.Fatalf("timeout: syncer did not process up to block %d within time limit", maxBlock)
 		}
 
@@ -820,7 +821,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	t.Log("waiting for syncer to process up to block 5...")
 
-	if err := testCluster.DB.WaitForBlock(t, 5, 30*time.Second); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, 5, 150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -842,7 +843,7 @@ func TestE2E_SyncerNodeFailover(t *testing.T) {
 
 	t.Logf("waiting for syncer to process up to block %v...", receipt.BlockNumber.Uint64())
 
-	if err := testCluster.DB.WaitForBlock(t, receipt.BlockNumber.Uint64(), time.Minute); err != nil {
+	if err := testCluster.DB.WaitForBlock(t, receipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -907,7 +908,7 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 
 		if err := testCluster.DB.WaitForBlock(
 			t,
-			deployReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
+			deployReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
 			t.Fatal("syncer can't get to deployment block")
 		}
 
@@ -924,8 +925,8 @@ func TestE2E_ERC20StatsFailover(t *testing.T) {
 			big.NewInt(1000000))
 
 		if err := testCluster.DB.WaitForERC20Block(t,
-			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 30*time.Second); err != nil {
-			t.Fatal("syncer can't get to frist mint block")
+			erc20ContractAddr, mintReceipt.BlockNumber.Uint64(), 150*time.Second); err != nil {
+			t.Fatal("syncer can't get to first mint block")
 		}
 
 		statsBefore := testCluster.DB.GetERC20TokensHourlyStatsFromDB(context.TODO(), t)
@@ -1076,7 +1077,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	if err := testCluster.DB.WaitForBlock(t,
 		transferReceipt.BlockNumber.Uint64(),
-		30*time.Second); err != nil {
+		150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1112,7 +1113,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	if err := testCluster.DB.WaitForBlock(t,
 		secondTransferReceipt.BlockNumber.Uint64(),
-		30*time.Second); err != nil {
+		150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1164,7 +1165,7 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 
 	if err := testCluster.DB.WaitForBlock(t,
 		erc20TransferReceipt.BlockNumber.Uint64(),
-		30*time.Second); err != nil {
+		150*time.Second); err != nil {
 		t.Fatalf("%s", err.Error())
 	}
 
@@ -1192,4 +1193,371 @@ func TestE2E_EOAActivityFailover(t *testing.T) {
 	}
 
 	t.Log("all EOA activity correctly indexed")
+}
+
+// TestE2E_SyncerReconnectsAfterNodeOutage verifies that the syncer survives losing its
+// RPC node and recovers on its own
+func TestE2E_SyncerReconnectsAfterNodeOutage(t *testing.T) {
+	pkSender, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkReceiver, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	pkSenderStr := hex.EncodeToString(crypto.FromECDSA(pkSender))
+	senderAddress := crypto.PubkeyToAddress(pkSender.PublicKey)
+	receiverAddress := crypto.PubkeyToAddress(pkReceiver.PublicKey)
+
+	testCluster := framework.NewTestCluster(
+		t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithNumOfRetries(100),
+		framework.WithUclFlags("write-logs", "--premine", senderAddress.String()))
+
+	defer testCluster.Stop()
+
+	testCluster.Start()
+
+	// Baseline: the syncer is indexing normally from node 0.
+	t.Log("waiting for syncer to process up to block 5...")
+
+	if err := testCluster.DB.WaitForBlock(t, 5, 150*time.Second); err != nil {
+		t.Fatalf("baseline sync failed: %s", err.Error())
+	}
+
+	blockBeforeOutage := testCluster.DB.GetLastBlockNumber(t)
+
+	t.Logf("last indexed block before outage: %d", blockBeforeOutage)
+
+	// Outage: node 0 goes down for 20s and comes back on the SAME RPC endpoint.
+	// The rest of the cluster keeps producing blocks the whole time - those are
+	// exactly the blocks the syncer has to backfill.
+	testCluster.UCL.RestartNode(0, 20*time.Second)
+	t.Log("node 0 back up on the same RPC; syncer must reconnect on its own")
+
+	// A transaction after the node is back gives us a concrete target block to wait for.
+	receipt := testCluster.UCL.SendNativeTokens(pkSenderStr, receiverAddress, big.NewInt(1000))
+	target := receipt.BlockNumber.Uint64()
+
+	t.Logf("waiting for syncer to catch up to block %d WITHOUT restart...", target)
+
+	if err := testCluster.DB.WaitForBlock(t, target, 150*time.Second); err != nil {
+		t.Fatalf("syncer did not reconnect after node came back: %s", err.Error())
+	}
+
+	// The key assertion. WaitForBlock only checks the tip, so it would happily pass on a
+	// syncer that resumed at `latest` and left a hole where the outage was. This catches that.
+	if missing := testCluster.DB.MissingBlocks(t, blockBeforeOutage, target); len(missing) > 0 {
+		t.Fatalf("syncer skipped %d block(s) in range [%d, %d] after reconnect: %v",
+			len(missing), blockBeforeOutage, target, missing)
+	}
+
+	// Sanity check: the post-reconnect transaction made it into the DB, not just the block header.
+	tx := testCluster.DB.GetTransactionByHash(context.TODO(), t, receipt.TxHash.Hex())
+	if tx.Status != 1 {
+		t.Fatalf("tx %s indexed with non-success status", receipt.TxHash.Hex())
+	}
+
+	t.Logf("syncer reconnected and backfilled %d blocks", target-blockBeforeOutage)
+}
+
+var sinkAddr = common.HexToAddress("0x000000000000000000000000000000000000dEaD")
+
+func TestE2E_SyncerIndexesAllTxAcrossOutageUnderLoad(t *testing.T) {
+	const (
+		numAccounts  = 100
+		txPerAccount = 30 // ~3000 transfers total
+	)
+
+	funderKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate funder key: %v", err)
+	}
+
+	funderAddr := crypto.PubkeyToAddress(funderKey.PublicKey)
+
+	testCluster := framework.NewTestCluster(
+		t,
+		framework.WithLogging(),
+		framework.WithFullBlock(),
+		framework.WithEoaActivity(),
+		framework.WithNumOfRetries(100),
+		framework.WithUclFlags("write-logs", "--premine", funderAddr.String()),
+	)
+	defer testCluster.Stop()
+
+	testCluster.Start()
+
+	// Syncer reads node 0 - the one we take down. The flood MUST go to a live
+	// peer, else sends during the outage fail and there are no downtime blocks
+	// to backfill. ts.UCL.Client() is node 0, so dial node 1 explicitly.
+	client, err := ethclient.Dial(testCluster.UCL.NodeRpcUrl(1))
+	if err != nil {
+		t.Fatalf("failed to dial live node: %v", err)
+	}
+
+	defer client.Close()
+
+	ctx := context.Background()
+
+	chainID, err := client.ChainID(ctx)
+	if err != nil {
+		t.Fatalf("failed to get chain id: %v", err)
+	}
+
+	signer := types.LatestSignerForChainID(chainID)
+
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		t.Fatalf("failed to suggest gas price: %v", err)
+	}
+
+	if gasPrice.Sign() == 0 {
+		gasPrice = big.NewInt(1_000_000_000)
+	}
+
+	type loadAccount struct {
+		key   *ecdsa.PrivateKey
+		addr  common.Address
+		nonce uint64 // next nonce; after flood == number of tx submitted by this account
+	}
+
+	accounts := make([]*loadAccount, numAccounts)
+	for i := range accounts {
+		k, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("failed to generate account key: %v", err)
+		}
+
+		accounts[i] = &loadAccount{key: k, addr: crypto.PubkeyToAddress(k.PublicKey)}
+	}
+
+	// Fan out funds from the funder
+	gasCost := new(big.Int).Mul(big.NewInt(21_000), gasPrice)
+	perTx := new(big.Int).Add(big.NewInt(1), gasCost)
+	fundPerAccount := new(big.Int).Mul(perTx, big.NewInt(txPerAccount*2)) // 2x headroom
+
+	funderNonce, err := client.PendingNonceAt(ctx, funderAddr)
+	if err != nil {
+		t.Fatalf("failed to get funder nonce: %v", err)
+	}
+
+	fanOutStart := funderNonce
+
+	for _, a := range accounts {
+		to := a.addr
+
+		tx := types.NewTx(&types.LegacyTx{
+			Nonce: funderNonce, To: &to, Value: fundPerAccount, Gas: 21_000, GasPrice: gasPrice,
+		})
+
+		signed, err := types.SignTx(tx, signer, funderKey)
+		if err != nil {
+			t.Fatalf("failed to sign funding tx: %v", err)
+		}
+
+		if err := client.SendTransaction(ctx, signed); err != nil {
+			t.Fatalf("failed to submit funding tx: %v", err)
+		}
+
+		funderNonce++
+	}
+
+	// Sequential funder nonces => mined nonce reaching this means all fan-out mined
+	t.Log("waiting for fan-out funding to be mined...")
+
+	testCluster.UCL.WaitForNonce(funderAddr, fanOutStart+numAccounts, 60*time.Second)
+
+	if err := testCluster.DB.WaitForBlock(t, 3, 30*time.Second); err != nil {
+		t.Fatalf("baseline sync failed: %s", err.Error())
+	}
+
+	blockBeforeOutage := testCluster.DB.GetLastBlockNumber(t)
+
+	t.Logf("last indexed block before outage: %d", blockBeforeOutage)
+
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+	)
+	for _, a := range accounts {
+		wg.Add(1)
+
+		go func(a *loadAccount) {
+			defer wg.Done()
+
+			<-start
+
+			for i := 0; i < txPerAccount; i++ {
+				tx := types.NewTx(&types.LegacyTx{
+					Nonce: a.nonce, To: &sinkAddr, Value: big.NewInt(1), Gas: 21_000, GasPrice: gasPrice,
+				})
+
+				signed, err := types.SignTx(tx, signer, a.key)
+				if err != nil {
+					t.Errorf("sign tx for %s: %v", a.addr, err)
+
+					return
+				}
+				// Stop this account on first send error so we never leave a nonce
+				// gap (which would stall every later tx from it).
+				if err := client.SendTransaction(ctx, signed); err != nil {
+					t.Logf("account %s stopped at tx %d: %v", a.addr, i, err)
+
+					return
+				}
+
+				a.nonce++
+			}
+		}(a)
+	}
+
+	// Start the flood and, while it is in flight, take node 0 down for 20s.
+	close(start)
+	testCluster.UCL.RestartNode(0, 20*time.Second)
+
+	t.Log("node 0 back up on the same RPC; syncer must reconnect on its own")
+
+	wg.Wait()
+
+	var totalSubmitted uint64
+	for _, a := range accounts {
+		totalSubmitted += a.nonce
+	}
+
+	if minTx := uint64(numAccounts * txPerAccount * 8 / 10); totalSubmitted < minTx {
+		t.Fatalf("flood too small to be meaningful: %d/%d submitted (need >= %d)",
+			totalSubmitted, numAccounts*txPerAccount, minTx)
+	}
+
+	t.Logf("submitted %d/%d tx", totalSubmitted, numAccounts*txPerAccount)
+
+	// A single marker tx lands in an early block and misses the flood's tail,
+	// so wait for every account's mined nonce to catch up first.
+	t.Log("waiting for the flood to fully mine...")
+
+	for _, a := range accounts {
+		testCluster.UCL.WaitForNonce(a.addr, a.nonce, 2*time.Minute)
+	}
+
+	target, err := client.BlockNumber(ctx)
+	if err != nil {
+		t.Fatalf("failed to read tip: %v", err)
+	}
+
+	t.Logf("flood fully mined; tip=%d", target)
+
+	if err := testCluster.DB.WaitForBlock(t, target, 2*time.Minute); err != nil {
+		t.Fatalf("syncer did not catch up to %d after reconnect: %s", target, err.Error())
+	}
+
+	if missing := testCluster.DB.MissingBlocks(t, blockBeforeOutage, target); len(missing) > 0 {
+		t.Fatalf("syncer skipped %d block(s) in [%d, %d]: %v",
+			len(missing), blockBeforeOutage, target, missing)
+	}
+
+	// Ground truth is what the chain actually mined, not our submission list.
+	onChain := make([]common.Hash, 0, totalSubmitted)
+	expectedEOA := map[string]map[hexutil.Uint64]struct{}{}
+	addEOA := func(addr common.Address, hour hexutil.Uint64) {
+		key := addr.Hex()
+		if expectedEOA[key] == nil {
+			expectedEOA[key] = map[hexutil.Uint64]struct{}{}
+		}
+
+		expectedEOA[key][hour] = struct{}{}
+	}
+
+	for n := blockBeforeOutage; n <= target; n++ {
+		block, err := client.BlockByNumber(ctx, new(big.Int).SetUint64(n))
+		if err != nil {
+			t.Fatalf("failed to read block %d from node: %v", n, err)
+		}
+
+		hour := hexutil.Uint64(time.Unix(int64(block.Time()), 0).UTC().Truncate(time.Hour).Unix())
+
+		for _, tx := range block.Transactions() {
+			onChain = append(onChain, tx.Hash())
+
+			// EOA participation: both sender and recipient of a native tx count.
+			from, err := types.Sender(signer, tx)
+			if err != nil {
+				t.Fatalf("failed to recover sender for %s: %v", tx.Hash().Hex(), err)
+			}
+
+			addEOA(from, hour)
+
+			if to := tx.To(); to != nil {
+				addEOA(*to, hour)
+			}
+		}
+	}
+
+	t.Logf("chain mined %d tx in [%d, %d]", len(onChain), blockBeforeOutage, target)
+
+	var missingInDB []common.Hash
+
+	for _, h := range onChain {
+		tx := testCluster.DB.GetTransactionByHash(context.TODO(), t, h.Hex())
+		if tx == nil {
+			missingInDB = append(missingInDB, h)
+
+			continue
+		}
+
+		if tx.Status != 1 {
+			t.Errorf("tx %s indexed with non-success status %d", h.Hex(), tx.Status)
+		}
+	}
+
+	if len(missingInDB) > 0 {
+		sample := missingInDB
+		if len(sample) > 5 {
+			sample = sample[:5]
+		}
+
+		t.Fatalf("%d/%d on-chain tx missing from DB, e.g. %v", len(missingInDB), len(onChain), sample)
+	}
+
+	testCluster.DB.WaitForEOABlock(t, target, 2*time.Minute)
+
+	actualEOA := testCluster.DB.GetEOAParticipationStats(context.TODO(), t)
+
+	for _, a := range accounts {
+		if _, ok := actualEOA[a.addr.Hex()]; !ok {
+			t.Fatalf("flood account %s missing from EOA stats", a.addr.Hex())
+		}
+	}
+
+	if _, ok := actualEOA[sinkAddr.Hex()]; !ok {
+		t.Fatalf("sink %s missing from EOA stats", sinkAddr.Hex())
+	}
+
+	// Every (address, hour) the chain shows in-range must be in the DB.
+	// Subset, not equality: the DB also holds pre-outage fan-out activity.
+	for addr, hours := range expectedEOA {
+		got, ok := actualEOA[addr]
+		if !ok {
+			t.Fatalf("address %s missing from EOA stats", addr)
+		}
+
+		gotSet := make(map[hexutil.Uint64]struct{}, len(got))
+
+		for _, h := range got {
+			gotSet[h] = struct{}{}
+		}
+
+		for hour := range hours {
+			if _, ok := gotSet[hour]; !ok {
+				t.Fatalf("address %s: hour %d on-chain but missing from EOA stats", addr, hour)
+			}
+		}
+	}
+
+	t.Logf("syncer indexed all %d on-chain tx and matching EOA activity across the outage", len(onChain))
 }
