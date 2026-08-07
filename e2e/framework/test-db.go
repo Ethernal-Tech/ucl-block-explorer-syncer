@@ -622,6 +622,10 @@ func (d *DB) WaitForDataAnchorBlock(
 ) error {
 	t.Helper()
 
+	var lastNextBlock uint64
+
+	var lastErr error
+
 	deadline := time.Now().UTC().Add(timeout)
 	for time.Now().UTC().Before(deadline) {
 		var nextBlock uint64
@@ -635,6 +639,9 @@ func (d *DB) WaitForDataAnchorBlock(
 			return nil
 		}
 
+		lastNextBlock = nextBlock
+		lastErr = err
+
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("query data-anchor cursor: %w", err)
 		}
@@ -642,8 +649,15 @@ func (d *DB) WaitForDataAnchorBlock(
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timeout: data-anchor syncer did not process up to block %d within %s",
-		maxBlock, timeout)
+	if lastErr != nil {
+		return fmt.Errorf("timeout: data-anchor syncer did not process up to block %d within %s "+
+			"(factory %s not in watchlist yet)",
+			maxBlock, timeout, factory.Hex())
+	}
+
+	return fmt.Errorf("timeout: data-anchor syncer did not process up to block %d within %s "+
+		"(next_block=%d)",
+		maxBlock, timeout, lastNextBlock)
 }
 
 func (d *DB) GetTotalGasUsed(t *testing.T) uint64 {

@@ -74,6 +74,12 @@ func WithBatchSize(size uint64) Option {
 	}
 }
 
+func WithPollInterval(intervalMs uint64) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.PollInterval = intervalMs
+	}
+}
+
 func WithTxWorkers(workers uint64) Option {
 	return func(cfg *TestClusterConfig) {
 		cfg.Syncer.TxWorkers = workers

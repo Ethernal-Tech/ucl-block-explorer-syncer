@@ -34,6 +34,9 @@ func TestE2E_DataAnchorDailyCommitments(t *testing.T) {
 		framework.WithAPINodeRPC(framework.DefaultFrameworkConfig().Syncer.RpcUrl),
 		framework.WithDataAnchorStats(),
 		framework.WithFullBlock(),
+		// Data-anchor workers are tip-gated on the tx worker. Keep the tx poll
+		// short so empty blocks between phases do not exhaust the wait budget.
+		framework.WithPollInterval(200),
 		framework.WithLogging(),
 		framework.WithUclFlags(testWriteLogsArg, testPremineFlag, premineAddress),
 	)
@@ -86,9 +89,7 @@ func TestE2E_DataAnchorDailyCommitments(t *testing.T) {
 		firstHistoricalCommit.BlockNumber.Uint64(),
 		secondHistoricalCommit.BlockNumber.Uint64(),
 	)
-	if err := ts.DB.WaitForDataAnchorBlock(t, factory, historicalTip, 45*time.Second); err != nil {
-		t.Fatalf("wait for historical data-anchor backfill: %v", err)
-	}
+	waitForDataAnchorIndexed(t, ts, factory, historicalTip)
 
 	expected := map[common.Address]expectedDailyCommitment{
 		firstDaily: {
@@ -120,9 +121,7 @@ func TestE2E_DataAnchorDailyCommitments(t *testing.T) {
 		firstLiveCommit.BlockNumber.Uint64(),
 		secondLiveCommit.BlockNumber.Uint64(),
 	)
-	if err := ts.DB.WaitForDataAnchorBlock(t, factory, liveTip, 45*time.Second); err != nil {
-		t.Fatalf("wait for live data-anchor commits: %v", err)
-	}
+	waitForDataAnchorIndexed(t, ts, factory, liveTip)
 
 	assertDailyCommitmentCounts(t, ts, factory, expected)
 
@@ -142,9 +141,7 @@ func TestE2E_DataAnchorDailyCommitments(t *testing.T) {
 		firstDowntimeCommit.BlockNumber.Uint64(),
 		secondDowntimeCommit.BlockNumber.Uint64(),
 	)
-	if err := ts.DB.WaitForDataAnchorBlock(t, factory, restartTip, 45*time.Second); err != nil {
-		t.Fatalf("wait for data-anchor restart catch-up: %v", err)
-	}
+	waitForDataAnchorIndexed(t, ts, factory, restartTip)
 
 	assertDailyCommitmentCounts(t, ts, factory, expected)
 
@@ -198,6 +195,29 @@ func TestE2E_DataAnchorDailyCommitments(t *testing.T) {
 	assertTransactionIsDataAnchor(t, ts, firstDeploy.TxHash.Hex(), true)
 	assertTransactionIsDataAnchor(t, ts, firstLiveCommit.TxHash.Hex(), true)
 	assertTransactionIsDataAnchor(t, ts, unrelatedReceipt.TxHash.Hex(), false)
+}
+
+// waitForDataAnchorIndexed waits for the tx worker tip first, then for the
+// data-anchor cursor. Data-anchor getBlock returns nil until the tx tip reaches
+// the target block, so waiting only on the cursor can burn the timeout on tip
+// lag after a burst of empty blocks.
+func waitForDataAnchorIndexed(
+	t *testing.T,
+	ts *framework.TestCluster,
+	factory common.Address,
+	block uint64,
+) {
+	t.Helper()
+
+	const timeout = 3 * time.Minute
+
+	if err := ts.DB.WaitForBlock(t, block, timeout); err != nil {
+		t.Fatalf("wait for tx worker tip past block %d: %v", block, err)
+	}
+
+	if err := ts.DB.WaitForDataAnchorBlock(t, factory, block, timeout); err != nil {
+		t.Fatalf("wait for data-anchor cursor past block %d: %v", block, err)
+	}
 }
 
 func assertTransactionIsDataAnchor(
