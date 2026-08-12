@@ -3,8 +3,11 @@ package cli
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 
+	dataanchorbackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/data_anchor_backend"
+	syncerdatabase "github.com/Ethernal-Tech/ucl-block-explorer-syncer/database"
 	eoaactivitybackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/eoa_activity_backend"
 	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
 	esgaggregationbackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/esg_aggregation_backend"
@@ -32,6 +35,9 @@ var (
 	erc20WatchlistCheckInterval uint64
 	erc20StartFromTip           bool
 	erc20ProcessInterval        uint64
+	dataAnchorStats             bool
+	dataAnchorWatchlistPoll     uint64
+	dataAnchorProcessInterval   uint64
 	eoaActivityStats            bool
 	eoaActivityProcessInterval  uint64
 	circulationPollInterval     uint64
@@ -108,6 +114,15 @@ func setOptionalFlags() {
 	syncerCommand.Flags().Uint64Var(&erc20ProcessInterval, "erc20-process-interval", 2000,
 		"how often the syncer retries processing a block for ERC-20 events when it is not yet available, in milliseconds")
 
+	syncerCommand.Flags().BoolVar(&dataAnchorStats, "data-anchor-stats", false,
+		"enable DailyCommitment factory discovery and commitment-count indexing")
+
+	syncerCommand.Flags().Uint64Var(&dataAnchorWatchlistPoll, "data-anchor-watchlist-poll-interval", 2000,
+		"how often the data-anchor factory watchlist is checked for changes, in milliseconds")
+
+	syncerCommand.Flags().Uint64Var(&dataAnchorProcessInterval, "data-anchor-process-interval", 2000,
+		"how often data-anchor workers retry blocks that are not indexed yet, in milliseconds")
+
 	syncerCommand.Flags().BoolVar(&eoaActivityStats, "eoa-activity-stats", false,
 		"enable EOA activity tracking, recording the UTC hours in which each EOA address participated in a transaction")
 
@@ -145,6 +160,12 @@ func execute(cmd *cobra.Command, args []string) error {
 
 	if err := db.Ping(); err != nil {
 		return fmt.Errorf("db ping error: %w", err)
+	}
+
+	defer db.Close() //nolint:errcheck
+
+	if err := syncerdatabase.RunMigrations(db, log.Printf); err != nil {
+		return fmt.Errorf("database migration failed: %w", err)
 	}
 
 	sh, err := storage_handler.NewPgStorageHandler(db, fullBlock)
@@ -211,6 +232,19 @@ func execute(cmd *cobra.Command, args []string) error {
 		if erc20StartFromTip {
 			opts = append(opts, syncer.WithErc20StartFromTip())
 		}
+	}
+
+	if dataAnchorStats {
+		backend := dataanchorbackend.NewPgDataAnchorBackend(db)
+		if logging {
+			backend = dataanchorbackend.NewPgDataAnchorBackend(db, helper.DefaultLogger{})
+		}
+
+		opts = append(opts,
+			syncer.WithDataAnchorStats(backend),
+			syncer.WithDataAnchorWatchlistCheckInterval(dataAnchorWatchlistPoll),
+			syncer.WithDataAnchorProcessInterval(dataAnchorProcessInterval),
+		)
 	}
 
 	if eoaActivityStats {

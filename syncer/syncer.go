@@ -3,6 +3,7 @@ package syncer
 import (
 	"container/list"
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -145,6 +146,15 @@ type Erc20Backend interface {
 		volumes map[string]*big.Int) error
 }
 
+// DataAnchorBackend provides watchlist, indexed-log, and atomic persistence
+// operations for DailyCommitment factory workers.
+type DataAnchorBackend interface {
+	GetWatchlist() ([]*types.DataAnchorFactory, error)
+	GetTip() (*uint64, error)
+	GetLogs(blockNumber uint64) ([]types.ReceiptLog, error)
+	ProcessBlock(blockNumber uint64, factory *types.DataAnchorFactory, logs []types.ReceiptLog) error
+}
+
 // ESGAggregationBackend defines the interface that must be implemented by any backend used
 // for ESG calculation and aggregation. It is required when the syncer is configured with the
 // [WithESGAggregationStats].
@@ -275,6 +285,10 @@ type Syncer struct {
 	// for ERC-20 events when it is not yet available. By default, 2000 milliseconds.
 	erc20ProcessInterval uint64
 
+	dataAnchorBackend                DataAnchorBackend
+	dataAnchorWatchlistCheckInterval uint64
+	dataAnchorProcessInterval        uint64
+
 	// eoaActivityBackend is the backend required for processing EOA activities. If nil, processing
 	// is disabled. For details, see the [EoaActivityBackend] interface documentation.
 	eoaActivityBackend EoaActivityBackend
@@ -332,6 +346,8 @@ type Syncer struct {
 
 	// erc20wHandles holds the handles for all erc20 workers managed by the syncer.
 	erc20wHandles map[string]*erc20WorkerHandle
+
+	dataAnchorwHandles map[string]*dataAnchorWorkerHandle
 
 	// eoaawHandle holds the handle for the EOA activity worker managed by the syncer.
 	eoaawHandle *eoaActivityWorkerHandle
@@ -393,18 +409,20 @@ func NewSyncer(
 	}
 
 	syncer := &Syncer{
-		rpcURL:                      rpcURL,
-		storage:                     storage,
-		maxRetries:                  1,
-		retryInterval:               2000,
-		batchSize:                   1,
-		maxTxWorkers:                1,
-		pollInterval:                2000,
-		txPoolPollInterval:          2000,
-		erc20WatchlistCheckInterval: 2000,
-		erc20ProcessInterval:        2000,
-		eoaActivityProcessInterval:  2000,
-		esgAggregationPollInterval:  uint64((24 * time.Hour).Milliseconds()),
+		rpcURL:                           rpcURL,
+		storage:                          storage,
+		maxRetries:                       1,
+		retryInterval:                    2000,
+		batchSize:                        1,
+		maxTxWorkers:                     1,
+		pollInterval:                     2000,
+		txPoolPollInterval:               2000,
+		erc20WatchlistCheckInterval:      2000,
+		erc20ProcessInterval:             2000,
+		dataAnchorWatchlistCheckInterval: 2000,
+		dataAnchorProcessInterval:        2000,
+		eoaActivityProcessInterval:       2000,
+		esgAggregationPollInterval:       uint64((24 * time.Hour).Milliseconds()),
 	}
 
 	for _, o := range opts {
@@ -483,6 +501,10 @@ func NewSyncer(
 		// the number of ERC-20 workers) may change between the time the syncer is created and
 		// the time it is started. Therefore, the handles for ERC-20 workers are not initialized
 		// here but deferred until the syncer is started.
+	}
+
+	if syncer.dataAnchorBackend != nil {
+		syncer.dataAnchorwHandles = map[string]*dataAnchorWorkerHandle{}
 	}
 
 	// EOA activity worker handle construction.
@@ -602,6 +624,10 @@ func (s *Syncer) Start() error {
 	// We don't care about txpool worker since it is scheduled for removal.
 
 	if s.erc20Backend != nil {
+		wg.Add(1)
+	}
+
+	if s.dataAnchorBackend != nil {
 		wg.Add(1)
 	}
 
@@ -1015,6 +1041,14 @@ func (s *Syncer) Start() error {
 
 				return
 			}
+		}()
+	}
+
+	if s.dataAnchorBackend != nil {
+		go func() {
+			defer wg.Done()
+
+			s.runDataAnchorWorkerController()
 		}()
 	}
 
@@ -1622,6 +1656,279 @@ func (s *Syncer) createErc20WorkerHandle(
 		doneCh,
 		errCh,
 	}, nil
+}
+
+type dataAnchorWorkerHandle struct {
+	worker  *prologworker.PrologWorker
+	factory *types.DataAnchorFactory
+	ctrlCh  chan struct{}
+	doneCh  chan string
+	errCh   chan struct {
+		Err error
+		Id  string
+	}
+}
+
+func (s *Syncer) runDataAnchorWorkerController() {
+	shutDownFn := func() {
+		s.shutDownHandles()
+		s.stopDataAnchorWorkers()
+	}
+
+	var lastEmptyWatchlistLog time.Time
+
+	for {
+		select {
+		case <-s.shutDownCh:
+			shutDownFn()
+
+			return
+		default:
+		}
+
+		factories, err := s.dataAnchorBackend.GetWatchlist()
+		if err != nil {
+			s.log("failed to fetch data-anchor factory watchlist: %s", err.Error())
+			shutDownFn()
+
+			return
+		}
+
+		enabled := 0
+
+		for _, factory := range factories {
+			if factory != nil && factory.Enabled {
+				enabled++
+			}
+		}
+
+		if enabled == 0 && time.Since(lastEmptyWatchlistLog) >= 15*time.Second {
+			lastEmptyWatchlistLog = time.Now().UTC()
+
+			s.log("data-anchor watchlist has no enabled factories "+
+				"(register via POST /admin/v1/data-anchor/factories); active_workers=%d",
+				len(s.dataAnchorwHandles))
+		}
+
+		if err := s.reconcileDataAnchorWorkers(factories); err != nil {
+			s.log("failed to reconcile data-anchor workers: %s", err.Error())
+			shutDownFn()
+
+			return
+		}
+
+		cases := []reflect.SelectCase{
+			{
+				Dir: reflect.SelectRecv,
+				Chan: reflect.ValueOf(time.After(
+					time.Duration(s.dataAnchorWatchlistCheckInterval) * time.Millisecond)),
+			},
+			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(s.shutDownCh)},
+		}
+
+		handles := make([]*dataAnchorWorkerHandle, 0, len(s.dataAnchorwHandles))
+		for _, handle := range s.dataAnchorwHandles {
+			handles = append(handles, handle)
+			cases = append(cases, reflect.SelectCase{
+				Dir:  reflect.SelectRecv,
+				Chan: reflect.ValueOf(handle.errCh),
+			})
+		}
+
+		chosen, value, _ := reflect.Select(cases)
+		if chosen == 0 {
+			continue
+		}
+
+		if chosen == 1 {
+			shutDownFn()
+
+			return
+		}
+
+		handle := handles[chosen-2]
+		workerErr, _ := value.Interface().(struct {
+			Err error
+			Id  string
+		})
+
+		delete(s.dataAnchorwHandles, handle.factory.Address)
+
+		if errors.Is(workerErr.Err, types.ErrDataAnchorCursorChanged) {
+			s.log("data-anchor worker for factory %s stopped after its cursor changed; restarting",
+				handle.factory.Address)
+
+			continue
+		}
+
+		s.log("data-anchor worker for factory %s encountered a fatal error: %s",
+			handle.factory.Address, workerErr.Err.Error())
+		shutDownFn()
+
+		return
+	}
+}
+
+func (s *Syncer) createDataAnchorWorkerHandle(
+	factory *types.DataAnchorFactory,
+) (*dataAnchorWorkerHandle, error) {
+	ctrlCh := make(chan struct{}, 1)
+	doneCh := make(chan string, 1)
+	errCh := make(chan struct {
+		Err error
+		Id  string
+	}, 1)
+
+	var lastTipWaitLog time.Time
+
+	getBlockFn := func(blockNumber uint64) (*types.Block, error) {
+		tip, err := s.dataAnchorBackend.GetTip()
+		if err != nil {
+			return nil, err
+		}
+
+		if tip == nil || *tip < blockNumber {
+			// Rate-limit: at the tip this path runs every process interval.
+			if time.Since(lastTipWaitLog) >= 15*time.Second {
+				lastTipWaitLog = time.Now().UTC()
+
+				if tip == nil {
+					s.log("data-anchor worker %s waiting: tx worker tip not set yet (need block %d)",
+						factory.Address, blockNumber)
+				} else {
+					s.log("data-anchor worker %s waiting: tx worker tip=%d < next_block=%d",
+						factory.Address, *tip, blockNumber)
+				}
+			}
+
+			return nil, nil
+		}
+
+		logs, err := s.dataAnchorBackend.GetLogs(blockNumber)
+		if err != nil {
+			return nil, err
+		}
+
+		return &types.Block{
+			Number:       hexutil.Uint64(blockNumber),
+			Transactions: []*types.Transaction{{Hash: "data-anchor", Logs: logs}},
+		}, nil
+	}
+
+	processLogsFn := func(block *types.Block, logs []*types.ReceiptLog) error {
+		entries := make([]types.ReceiptLog, 0, len(logs))
+		for _, entry := range logs {
+			if entry != nil {
+				entries = append(entries, *entry)
+			}
+		}
+
+		return s.dataAnchorBackend.ProcessBlock(uint64(block.Number), factory, entries)
+	}
+
+	opts := []prologworker.PrologWorkerOption{
+		prologworker.WithID(factory.Address),
+		prologworker.WithStartBlock(factory.NextBlock),
+		prologworker.WithProcessInterval(s.dataAnchorProcessInterval),
+		prologworker.WithWaitOnlyOnNil(),
+	}
+	if s.logger != nil {
+		opts = append(opts, prologworker.WithLogger(s.logger))
+	}
+
+	worker, err := prologworker.NewPrologWorker(
+		getBlockFn,
+		processLogsFn,
+		nil,
+		ctrlCh,
+		doneCh,
+		errCh,
+		opts...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create data-anchor worker: %w", err)
+	}
+
+	handle := &dataAnchorWorkerHandle{
+		worker:  worker,
+		factory: factory,
+		ctrlCh:  ctrlCh,
+		doneCh:  doneCh,
+		errCh:   errCh,
+	}
+
+	return handle, nil
+}
+
+func (s *Syncer) reconcileDataAnchorWorkers(factories []*types.DataAnchorFactory) error {
+	activeFactories := make(map[string]*types.DataAnchorFactory, len(factories))
+	for _, factory := range factories {
+		if factory != nil && factory.Enabled {
+			activeFactories[factory.Address] = factory
+		}
+	}
+
+	for address := range s.dataAnchorwHandles {
+		if _, active := activeFactories[address]; active {
+			continue
+		}
+
+		if err := s.stopDataAnchorWorker(address); err != nil {
+			return err
+		}
+	}
+
+	for _, factory := range activeFactories {
+		if _, exists := s.dataAnchorwHandles[factory.Address]; exists {
+			continue
+		}
+
+		handle, err := s.createDataAnchorWorkerHandle(factory)
+		if err != nil {
+			return fmt.Errorf("create data-anchor worker for factory %s: %w",
+				factory.Address, err)
+		}
+
+		if err := handle.worker.Start(); err != nil {
+			return fmt.Errorf("start data-anchor worker for factory %s: %w",
+				factory.Address, err)
+		}
+
+		s.dataAnchorwHandles[factory.Address] = handle
+		s.log("data-anchor worker for factory %s started at block %d",
+			factory.Address, factory.NextBlock)
+	}
+
+	return nil
+}
+
+func (s *Syncer) stopDataAnchorWorker(address string) error {
+	handle, exists := s.dataAnchorwHandles[address]
+	if !exists {
+		return nil
+	}
+
+	delete(s.dataAnchorwHandles, address)
+	close(handle.ctrlCh)
+
+	select {
+	case workerErr := <-handle.errCh:
+		return fmt.Errorf("data-anchor worker for factory %s encountered a fatal error: %w",
+			handle.factory.Address, workerErr.Err)
+	case <-handle.doneCh:
+		s.log("data-anchor worker for factory %s successfully shut down",
+			handle.factory.Address)
+
+		return nil
+	}
+}
+
+func (s *Syncer) stopDataAnchorWorkers() {
+	for address := range s.dataAnchorwHandles {
+		if err := s.stopDataAnchorWorker(address); err != nil {
+			s.log("%s", err.Error())
+		}
+	}
 }
 
 type eoaActivityWorkerHandle struct {

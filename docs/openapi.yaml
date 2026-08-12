@@ -17,6 +17,7 @@ tags:
   - name: Transactions
   - name: Addresses
   - name: Tokens
+  - name: Data Anchor
 
 paths:
   /api/v1/blocks:
@@ -145,6 +146,7 @@ paths:
                 metadata:
                   functionName: transfer
                 data: "0xa9059cbb..."
+                isDataAnchor: false
         '400':
           description: Malformed transaction hash
           content:
@@ -372,6 +374,74 @@ paths:
                   code: database_error
                   message: failed to list token transfers
 
+  /api/v1/data-anchor/daily-commitments:
+    get:
+      operationId: getDailyCommitments
+      tags: [Data Anchor]
+      summary: List indexed daily commitment statistics
+      description: |
+        Returns commitment counts for DailyCommitment contracts discovered from
+        registered factories, ordered by day descending.
+      parameters:
+        - name: factory_address
+          in: query
+          schema:
+            $ref: '#/components/schemas/Address'
+        - name: day_from
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Inclusive lower Unix-second day timestamp.
+        - name: day_to
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+          description: Inclusive upper Unix-second day timestamp.
+        - name: institution_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/Bytes32'
+        - name: data_type
+          in: query
+          schema:
+            $ref: '#/components/schemas/Bytes32'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Daily commitment statistics page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyCommitmentsResponse'
+        '400':
+          description: Invalid query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Database unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   schemas:
     Address:
@@ -383,6 +453,12 @@ components:
     TransactionHash:
       type: string
       description: 32-byte transaction hash as a `0x`-prefixed hex string.
+      pattern: '^0x[0-9a-fA-F]{64}$'
+      example: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+
+    Bytes32:
+      type: string
+      description: A 32-byte value as a `0x`-prefixed hexadecimal string.
       pattern: '^0x[0-9a-fA-F]{64}$'
       example: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
 
@@ -454,7 +530,7 @@ components:
 
     Transaction:
       type: object
-      required: [blockNumber, from, hash, id, to, timestamp, metadata, data]
+      required: [blockNumber, from, hash, id, to, timestamp, metadata, data, isDataAnchor]
       properties:
         blockNumber:
           type: integer
@@ -478,6 +554,11 @@ components:
         data:
           type: string
           description: Transaction input data (`0x`-prefixed hex).
+        isDataAnchor:
+          type: boolean
+          description: |
+            True when the transaction destination is a registered data-anchor
+            factory or a discovered daily commitment contract.
 
     AddressBalance:
       type: object
@@ -541,4 +622,47 @@ components:
           type: string
           description: Opaque cursor for the next page. Omitted when there are no more results.
         pageSize:
+          type: integer
+
+    DailyCommitment:
+      type: object
+      required:
+        - factory_address
+        - day_timestamp
+        - data_type
+        - institution_id
+        - daily_contract_address
+        - commitment_count
+        - discovery_block
+      properties:
+        factory_address:
+          $ref: '#/components/schemas/Address'
+        day_timestamp:
+          type: integer
+          format: int64
+          description: UTC day as Unix seconds.
+        data_type:
+          $ref: '#/components/schemas/Bytes32'
+        institution_id:
+          $ref: '#/components/schemas/Bytes32'
+        daily_contract_address:
+          $ref: '#/components/schemas/Address'
+        commitment_count:
+          type: integer
+          format: int64
+        discovery_block:
+          type: integer
+          format: int64
+
+    DailyCommitmentsResponse:
+      type: object
+      required: [list, limit, offset]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyCommitment'
+        limit:
+          type: integer
+        offset:
           type: integer

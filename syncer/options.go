@@ -226,6 +226,42 @@ func WithErc20ProcessInterval(interval uint64) SyncerOption {
 	}
 }
 
+func WithDataAnchorStats(backend DataAnchorBackend) SyncerOption {
+	return func(s *Syncer) error {
+		if backend == nil {
+			return fmt.Errorf("data-anchor backend must be provided")
+		}
+
+		s.dataAnchorBackend = backend
+
+		return nil
+	}
+}
+
+func WithDataAnchorWatchlistCheckInterval(interval uint64) SyncerOption {
+	return func(s *Syncer) error {
+		if interval < 200 || interval > 900000 {
+			return fmt.Errorf("data-anchor watchlist check interval must be between 200ms and 15 minutes")
+		}
+
+		s.dataAnchorWatchlistCheckInterval = interval
+
+		return nil
+	}
+}
+
+func WithDataAnchorProcessInterval(interval uint64) SyncerOption {
+	return func(s *Syncer) error {
+		if interval < 200 || interval > 900000 {
+			return fmt.Errorf("data-anchor process interval must be between 200ms and 15 minutes")
+		}
+
+		s.dataAnchorProcessInterval = interval
+
+		return nil
+	}
+}
+
 // WithEoaActivityStats configures the syncer to track EOA activity statistics using the provided
 // backend. For additional information on the underlying process, see the [EoaActivityBackend]
 // interface documentation.

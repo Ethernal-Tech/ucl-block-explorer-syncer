@@ -2,11 +2,14 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
+
+var ErrDataAnchorCursorChanged = errors.New("data-anchor factory cursor changed")
 
 type Transaction struct {
 	Hash                 string         `json:"hash"`
@@ -69,6 +72,15 @@ type ERC20Token struct {
 	NextBlock uint64
 	CreatedAt time.Time
 	UpdatedAt *time.Time
+}
+
+type DataAnchorFactory struct {
+	Address    string
+	StartBlock uint64
+	NextBlock  uint64
+	Enabled    bool
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type BlockParticipant struct {

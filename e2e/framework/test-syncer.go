@@ -89,6 +89,16 @@ func (s *Syncer) buildArgs() []string {
 		}
 	}
 
+	if s.config.DataAnchorStats {
+		args = append(args,
+			"--data-anchor-stats",
+			"--data-anchor-watchlist-poll-interval",
+			strconv.FormatUint(s.config.DataAnchorPoll, 10),
+			"--data-anchor-process-interval",
+			strconv.FormatUint(s.config.DataAnchorProcess, 10),
+		)
+	}
+
 	if s.config.EoaActivityStats {
 		args = append(args, "--eoa-activity-stats")
 	}

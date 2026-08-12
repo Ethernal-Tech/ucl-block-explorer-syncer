@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 const (
@@ -264,6 +266,134 @@ func TestGetTransactionList_BlockNumberSilentlySkipped(t *testing.T) {
 			resp, _ := GetTransactionList(TransactionListRequest{BlockNumber: bn})
 			if resp.Code == "400" {
 				t.Fatalf("block number %q should not produce 400, got: %s", bn, resp.Message)
+			}
+		})
+	}
+}
+
+func TestGetTransactionList_IsDataAnchor(t *testing.T) {
+	conn, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sql mock: %v", err)
+	}
+	defer conn.Close()
+
+	previous := db
+	db = conn
+
+	t.Cleanup(func() { db = previous })
+
+	factory := "0x1000000000000000000000000000000000000001"
+	daily := "0x2000000000000000000000000000000000000002"
+	other := "0x3000000000000000000000000000000000000003"
+	txFactory := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	txDaily := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	txOther := "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+	mock.ExpectQuery("SELECT").
+		WithArgs(100, 0).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"hash", "block_number", "from_address", "to_address", "data_method", "timestamp", "is_data_anchor",
+		}).
+			AddRow(txFactory, int64(10), other, factory, "0xfe0e207b", uint64(1710000000), true).
+			AddRow(txDaily, int64(11), other, daily, "0x7f1c7e3d", uint64(1710000001), true).
+			AddRow(txOther, int64(12), other, other, "0xa9059cbb", uint64(1710000002), false))
+	mock.ExpectQuery("SELECT COUNT").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(int64(3)))
+
+	resp, err := GetTransactionList(TransactionListRequest{Page: 1, PageSize: 100})
+	if err != nil {
+		t.Fatalf("get transaction list: %v", err)
+	}
+
+	if resp.Code != "200" || len(resp.Data.List) != 3 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+
+	got := map[string]bool{}
+	for _, item := range resp.Data.List {
+		got[item.Hash] = item.IsDataAnchor
+	}
+
+	if !got[txFactory] || !got[txDaily] || got[txOther] {
+		t.Fatalf("isDataAnchor tags: %+v", got)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetTransactionByHash_IsDataAnchor(t *testing.T) {
+	tests := []struct {
+		name         string
+		to           string
+		isDataAnchor bool
+	}{
+		{
+			name:         "factory destination",
+			to:           "0x1000000000000000000000000000000000000001",
+			isDataAnchor: true,
+		},
+		{
+			name:         "daily destination",
+			to:           "0x2000000000000000000000000000000000000002",
+			isDataAnchor: true,
+		},
+		{
+			name:         "unrelated destination",
+			to:           "0x3000000000000000000000000000000000000003",
+			isDataAnchor: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			conn, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("create sql mock: %v", err)
+			}
+			defer conn.Close()
+
+			previous := db
+			db = conn
+
+			t.Cleanup(func() { db = previous })
+
+			hash := "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+			mock.ExpectQuery("SELECT").
+				WithArgs(hash).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"hash", "block_number", "from_address", "to_address",
+					"data_method", "data", "timestamp", "is_data_anchor",
+				}).AddRow(
+					hash,
+					int64(42),
+					"0x1111111111111111111111111111111111111111",
+					tc.to,
+					"0xfe0e207b",
+					"0xfe0e207b",
+					uint64(1710000000),
+					tc.isDataAnchor,
+				))
+
+			resp, err := GetTransactionByHash(hash)
+			if err != nil {
+				t.Fatalf("get transaction by hash: %v", err)
+			}
+
+			if resp.Code != "200" || len(resp.Data.List) != 1 {
+				t.Fatalf("unexpected response: %+v", resp)
+			}
+
+			if resp.Data.List[0].IsDataAnchor != tc.isDataAnchor {
+				t.Fatalf("isDataAnchor: got %v want %v",
+					resp.Data.List[0].IsDataAnchor, tc.isDataAnchor)
+			}
+
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

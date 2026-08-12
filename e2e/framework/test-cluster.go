@@ -38,6 +38,12 @@ func WithErc20Stats() Option {
 	}
 }
 
+func WithDataAnchorStats() Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.DataAnchorStats = true
+	}
+}
+
 func WithEoaActivity() Option {
 	return func(cfg *TestClusterConfig) {
 		cfg.Syncer.EoaActivityStats = true
@@ -65,6 +71,12 @@ func WithLogging() Option {
 func WithBatchSize(size uint64) Option {
 	return func(cfg *TestClusterConfig) {
 		cfg.Syncer.BatchSize = size
+	}
+}
+
+func WithPollInterval(intervalMs uint64) Option {
+	return func(cfg *TestClusterConfig) {
+		cfg.Syncer.PollInterval = intervalMs
 	}
 }
 

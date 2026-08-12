@@ -177,6 +177,46 @@ func (a *API) RemoveERC20FromWatchlist(address, secret string) {
 	}
 }
 
+func (a *API) RegisterDataAnchorFactory(
+	address string,
+	startBlock uint64,
+	enabled bool,
+	secret string,
+) {
+	body, err := json.Marshal(map[string]interface{}{
+		"factory_address": address,
+		"start_block":     startBlock,
+		"enabled":         enabled,
+	})
+	if err != nil {
+		a.t.Fatalf("marshal data-anchor factory request: %v", err)
+	}
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		fmt.Sprintf("%s/admin/v1/data-anchor/factories", a.URL()),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		a.t.Fatalf("create data-anchor factory request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := a.doRequest(req)
+	if err != nil {
+		a.t.Fatalf("register data-anchor factory: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		a.t.Fatalf("register data-anchor factory: status=%d body=%s",
+			resp.StatusCode, respBody)
+	}
+}
+
 func (a *API) UpsertValidator(address, name, institution, region, secret string) {
 	body, err := json.Marshal(map[string]interface{}{
 		jsonNameKey:   name,

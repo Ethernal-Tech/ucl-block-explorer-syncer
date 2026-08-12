@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/api_storage"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/explorer"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/httpserver/publicapi"
 	"github.com/ethereum/go-ethereum/common"
@@ -122,6 +123,53 @@ func TestGetTransactionByHash_InvalidHash(t *testing.T) {
 				t.Fatalf("code: got %q", body.Error.Code)
 			}
 		})
+	}
+}
+
+func TestGetTransactionByHash_IsDataAnchorSerialized(t *testing.T) {
+	t.Parallel()
+
+	hash := "0x" + strings.Repeat("ab", 32)
+	s := New(explorer.NewExplorer(), Config{})
+	s.getTransactionByHash = func(string) (*api_storage.TransactionListResponse, error) {
+		return &api_storage.TransactionListResponse{
+			Code: "200",
+			Data: api_storage.TransactionListData{
+				List: []api_storage.TransactionListItem{{
+					BlockNumber: 123,
+					From:        "0x1111111111111111111111111111111111111111",
+					Hash:        hash,
+					ID:          1,
+					To:          "0x2222222222222222222222222222222222222222",
+					Timestamp:   1710000000000,
+					Metadata: api_storage.TransactionMetadata{
+						FunctionName: "unknown",
+					},
+					Data:         "0xfe0e207b",
+					IsDataAnchor: true,
+				}},
+				Total:    1,
+				Page:     1,
+				PageSize: 1,
+			},
+		}, nil
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/transactions/"+hash, nil)
+	s.GetTransactionByHash(rec, req, hash)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200 body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body publicapi.Transaction
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if !body.IsDataAnchor {
+		t.Fatalf("isDataAnchor: got false want true")
 	}
 }
 

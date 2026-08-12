@@ -58,6 +58,37 @@ type BlocksResponse struct {
 	Total int64 `json:"total"`
 }
 
+// Bytes32 A 32-byte value as a `0x`-prefixed hexadecimal string.
+type Bytes32 = string
+
+// DailyCommitment defines model for DailyCommitment.
+type DailyCommitment struct {
+	CommitmentCount int64 `json:"commitment_count"`
+
+	// DailyContractAddress 20-byte Ethereum address as a `0x`-prefixed hex string.
+	DailyContractAddress Address `json:"daily_contract_address"`
+
+	// DataType A 32-byte value as a `0x`-prefixed hexadecimal string.
+	DataType Bytes32 `json:"data_type"`
+
+	// DayTimestamp UTC day as Unix seconds.
+	DayTimestamp   int64 `json:"day_timestamp"`
+	DiscoveryBlock int64 `json:"discovery_block"`
+
+	// FactoryAddress 20-byte Ethereum address as a `0x`-prefixed hex string.
+	FactoryAddress Address `json:"factory_address"`
+
+	// InstitutionId A 32-byte value as a `0x`-prefixed hexadecimal string.
+	InstitutionId Bytes32 `json:"institution_id"`
+}
+
+// DailyCommitmentsResponse defines model for DailyCommitmentsResponse.
+type DailyCommitmentsResponse struct {
+	Limit  int               `json:"limit"`
+	List   []DailyCommitment `json:"list"`
+	Offset int               `json:"offset"`
+}
+
 // ErrorBody defines model for ErrorBody.
 type ErrorBody struct {
 	// Code Machine-readable error code.
@@ -116,8 +147,12 @@ type Transaction struct {
 	Hash TransactionHash `json:"hash"`
 
 	// Id Placeholder list identifier (always `1` for single-hash lookups).
-	Id       int64               `json:"id"`
-	Metadata TransactionMetadata `json:"metadata"`
+	Id int64 `json:"id"`
+
+	// IsDataAnchor True when the transaction destination is a registered data-anchor
+	// factory or a discovered daily commitment contract.
+	IsDataAnchor bool                `json:"isDataAnchor"`
+	Metadata     TransactionMetadata `json:"metadata"`
 
 	// Timestamp Block timestamp in milliseconds since Unix epoch.
 	Timestamp int64  `json:"timestamp"`
@@ -154,6 +189,21 @@ type GetBlocksParams struct {
 	OnlyWithTransactions *bool `form:"onlyWithTransactions,omitempty" json:"onlyWithTransactions,omitempty"`
 }
 
+// GetDailyCommitmentsParams defines parameters for GetDailyCommitments.
+type GetDailyCommitmentsParams struct {
+	FactoryAddress *Address `form:"factory_address,omitempty" json:"factory_address,omitempty"`
+
+	// DayFrom Inclusive lower Unix-second day timestamp.
+	DayFrom *int64 `form:"day_from,omitempty" json:"day_from,omitempty"`
+
+	// DayTo Inclusive upper Unix-second day timestamp.
+	DayTo         *int64   `form:"day_to,omitempty" json:"day_to,omitempty"`
+	InstitutionId *Bytes32 `form:"institution_id,omitempty" json:"institution_id,omitempty"`
+	DataType      *Bytes32 `form:"data_type,omitempty" json:"data_type,omitempty"`
+	Limit         *int     `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset        *int     `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // GetTokenTransfersParams defines parameters for GetTokenTransfers.
 type GetTokenTransfersParams struct {
 	// Cursor Opaque pagination cursor from a previous response `nextCursor`.
@@ -180,6 +230,9 @@ type ServerInterface interface {
 	// List indexed blocks
 	// (GET /api/v1/blocks)
 	GetBlocks(w http.ResponseWriter, r *http.Request, params GetBlocksParams)
+	// List indexed daily commitment statistics
+	// (GET /api/v1/data-anchor/daily-commitments)
+	GetDailyCommitments(w http.ResponseWriter, r *http.Request, params GetDailyCommitmentsParams)
 	// List ERC-20 token transfers
 	// (GET /api/v1/tokens/{tokenAddress}/transfers)
 	GetTokenTransfers(w http.ResponseWriter, r *http.Request, tokenAddress Address, params GetTokenTransfersParams)
@@ -275,6 +328,81 @@ func (siw *ServerInterfaceWrapper) GetBlocks(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetBlocks(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDailyCommitments operation middleware
+func (siw *ServerInterfaceWrapper) GetDailyCommitments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDailyCommitmentsParams
+
+	// ------------- Optional query parameter "factory_address" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "factory_address", r.URL.Query(), &params.FactoryAddress)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "factory_address", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "day_from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "day_from", r.URL.Query(), &params.DayFrom)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "day_from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "day_to" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "day_to", r.URL.Query(), &params.DayTo)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "day_to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "institution_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "institution_id", r.URL.Query(), &params.InstitutionId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "institution_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "data_type" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "data_type", r.URL.Query(), &params.DataType)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "data_type", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDailyCommitments(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -499,6 +627,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc("GET "+options.BaseURL+"/api/v1/addresses/{address}/balance", wrapper.GetAddressBalance)
 	m.HandleFunc("GET "+options.BaseURL+"/api/v1/blocks", wrapper.GetBlocks)
+	m.HandleFunc("GET "+options.BaseURL+"/api/v1/data-anchor/daily-commitments", wrapper.GetDailyCommitments)
 	m.HandleFunc("GET "+options.BaseURL+"/api/v1/tokens/{tokenAddress}/transfers", wrapper.GetTokenTransfers)
 	m.HandleFunc("GET "+options.BaseURL+"/api/v1/transactions/{hash}", wrapper.GetTransactionByHash)
 

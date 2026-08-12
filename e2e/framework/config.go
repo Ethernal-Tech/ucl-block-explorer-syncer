@@ -35,6 +35,9 @@ type SyncerConfig struct {
 	TxWorkers         uint64
 	Erc20Stats        bool
 	Erc20StartFromTip bool
+	DataAnchorStats   bool
+	DataAnchorPoll    uint64
+	DataAnchorProcess uint64
 	EoaActivityStats  bool
 	NumberOfRetries   uint64
 	RetryInterval     uint64
@@ -72,12 +75,14 @@ func DefaultFrameworkConfig() *TestClusterConfig {
 			Name:       "syncer_e2e",
 		},
 		Syncer: SyncerConfig{
-			RpcUrl:          "http://localhost:10002",
-			PollInterval:    2000,
-			BatchSize:       1,
-			TxWorkers:       1,
-			RetryInterval:   1000,
-			NumberOfRetries: 10,
+			RpcUrl:            "http://localhost:10002",
+			PollInterval:      2000,
+			BatchSize:         1,
+			TxWorkers:         1,
+			RetryInterval:     1000,
+			NumberOfRetries:   10,
+			DataAnchorPoll:    200,
+			DataAnchorProcess: 200,
 		},
 		API: ApiConfig{
 			Listen:      "localhost:8545",

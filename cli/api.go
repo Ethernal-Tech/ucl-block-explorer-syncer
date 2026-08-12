@@ -39,8 +39,11 @@ Public REST (no auth):
   GET /api/v1/transactions/{hash}
   GET /api/v1/addresses/{address}/balance  (requires --node-rpc)
   GET /api/v1/tokens/{tokenAddress}/transfers
+  GET /api/v1/data-anchor/daily-commitments
 
-Optional: POST /admin/v1/erc20/watchlist — register tokens in chain.erc20_watchlist (Bearer ADMIN_API_SECRET).`,
+Optional authenticated writes:
+  POST /admin/v1/erc20/watchlist
+  POST /admin/v1/data-anchor/factories`,
 	RunE: runAPI,
 }
 
@@ -58,9 +61,9 @@ func init() {
 	apiCommand.Flags().StringVar(&apiVersion, "version", "0.0.1",
 		"value for GET / JSON field \"version\"")
 	apiCommand.Flags().StringVar(&apiAdminAPISecret, "admin-api-secret", "",
-		"Bearer token for POST /admin/v1/erc20/watchlist (default: ADMIN_API_SECRET env)")
+		"Bearer token for authenticated /admin/v1 writes (default: ADMIN_API_SECRET env)")
 	apiCommand.Flags().StringVar(&apiNodeRPC, "node-rpc", "",
-		"chain JSON-RPC URL for eth_getBalance and admin ERC-20 contract verification")
+		"chain JSON-RPC URL for balances and admin contract verification")
 	_ = apiCommand.MarkFlagRequired("db-conn")
 }
 

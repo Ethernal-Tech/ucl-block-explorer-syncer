@@ -167,7 +167,8 @@ func (s *Server) GetTransactionByHash(
 		Metadata: publicapi.TransactionMetadata{
 			FunctionName: item.Metadata.FunctionName,
 		},
-		Data: item.Data,
+		Data:         item.Data,
+		IsDataAnchor: item.IsDataAnchor,
 	})
 }
 
@@ -320,6 +321,88 @@ func (s *Server) GetTokenTransfers(
 	writePublicJSON(w, http.StatusOK, out)
 }
 
+// GetDailyCommitments implements publicapi.ServerInterface.
+func (s *Server) GetDailyCommitments(
+	w http.ResponseWriter,
+	r *http.Request,
+	params publicapi.GetDailyCommitmentsParams,
+) {
+	req := api_storage.DailyCommitmentsRequest{
+		DayFrom: params.DayFrom,
+		DayTo:   params.DayTo,
+	}
+	if params.FactoryAddress != nil {
+		req.FactoryAddress = *params.FactoryAddress
+	}
+
+	if params.InstitutionId != nil {
+		req.InstitutionID = *params.InstitutionId
+	}
+
+	if params.DataType != nil {
+		req.DataType = *params.DataType
+	}
+
+	if params.Limit != nil {
+		req.Limit = *params.Limit
+	}
+
+	if params.Offset != nil {
+		req.Offset = *params.Offset
+	}
+
+	getDailyCommitments := s.getDailyCommitments
+	if getDailyCommitments == nil {
+		getDailyCommitments = api_storage.GetDailyCommitments
+	}
+
+	resp, err := getDailyCommitments(req)
+	if err != nil {
+		switch {
+		case api_storage.IsDBConnectionFailed(err):
+			writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode, "database not configured")
+		default:
+			var validationErr *api_storage.DailyCommitmentsValidationError
+			if !errors.As(err, &validationErr) {
+				writePublicError(w, http.StatusServiceUnavailable, databaseErrorCode,
+					"failed to list daily commitments")
+
+				return
+			}
+
+			switch validationErr.Parameter {
+			case "factory_address":
+				writePublicError(w, http.StatusBadRequest, invalidAddressCode, validationErr.Error())
+			case "institution_id", "data_type":
+				writePublicError(w, http.StatusBadRequest, "invalid_bytes32", validationErr.Error())
+			default:
+				writePublicError(w, http.StatusBadRequest, "invalid_query_parameter", validationErr.Error())
+			}
+		}
+
+		return
+	}
+
+	list := make([]publicapi.DailyCommitment, 0, len(resp.List))
+	for _, item := range resp.List {
+		list = append(list, publicapi.DailyCommitment{
+			FactoryAddress:       item.FactoryAddress,
+			DayTimestamp:         item.DayTimestamp,
+			DataType:             item.DataType,
+			InstitutionId:        item.InstitutionID,
+			DailyContractAddress: item.DailyContractAddress,
+			CommitmentCount:      item.CommitmentCount,
+			DiscoveryBlock:       item.DiscoveryBlock,
+		})
+	}
+
+	writePublicJSON(w, http.StatusOK, publicapi.DailyCommitmentsResponse{
+		List:   list,
+		Limit:  resp.Limit,
+		Offset: resp.Offset,
+	})
+}
+
 func writeBalanceRPCError(w http.ResponseWriter, err error) {
 	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "deadline exceeded") {
 		writePublicError(w, http.StatusGatewayTimeout, "node_rpc_timeout", "node RPC request timed out")
@@ -375,8 +458,16 @@ func handlePublicAPIParamError(w http.ResponseWriter, _ *http.Request, err error
 		case "block", "fromBlock", "toBlock":
 			writePublicError(w, http.StatusBadRequest, invalidBlockCode,
 				"block must be latest or a nonnegative decimal block number")
-		case jsonAddressKey, "tokenAddress":
+		case "day_from", "day_to":
+			writePublicError(w, http.StatusBadRequest, "invalid_query_parameter",
+				invalidFormat.ParamName+" must be a nonnegative Unix timestamp")
+		case jsonAddressKey, "tokenAddress", "factory_address":
 			writePublicError(w, http.StatusBadRequest, invalidAddressCode, "address must be a valid hex address")
+		case "institution_id", "data_type":
+			writePublicError(w, http.StatusBadRequest, "invalid_bytes32",
+				"value must be a 0x-prefixed 32-byte hexadecimal value")
+		case "limit", "offset":
+			writePublicError(w, http.StatusBadRequest, "invalid_query_parameter", invalidFormat.Error())
 		case "hash":
 			writePublicError(w, http.StatusBadRequest, invalidTransactionHashCode,
 				"transaction hash must be a 0x-prefixed 32-byte hexadecimal value")
