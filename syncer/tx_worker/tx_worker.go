@@ -3,11 +3,17 @@ package txworker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	"github.com/ethereum/go-ethereum/rpc"
 )
+
+// componentName labels every log line from this package, so Loki queries can
+// filter to one worker type without parsing the message.
+const componentName = "tx_worker"
 
 // TxJob represents a unit of work assigned to a [TxWorker], defining the range of transactions
 // within a block that the worker is responsible for fetching and processing.
@@ -67,9 +73,9 @@ type TxWorker struct {
 
 	// Optional fields (settable through [NewTxWorker] constructor function):
 
-	// logger records state changes and actions during the syncer's lifecycle. By default, no
-	// logging is performed.
-	logger types.Logger
+	// logger records state changes and actions during the syncer's lifecycle. Defaults to
+	// the process-wide slog logger; never silent.
+	logger *slog.Logger
 
 	// id is the unique identifier of the worker. By default, it is set to zero.
 	id uint64
@@ -94,7 +100,7 @@ type TxWorker struct {
 // addition to its receipt, see [TxWorker.fetchTxDataFn] for details.
 //
 // The following optional configurations are available (see their documentation for details):
-//  1. WithLogger (default: no logging)
+//  1. WithLogger (default: the process-wide slog logger)
 //  2. WithID (default: 0)
 //  3. WithRetry (default: first failure is treated as fatal)
 //  4. WithBatchSize (default, 1)
@@ -125,6 +131,10 @@ func NewTxWorker(
 	}
 
 	worker := &TxWorker{
+		// Never nil: components fall back to the process default so a syncer started
+		// without WithLogger still reports what it is doing.
+		logger: slog.Default(),
+
 		client:        client,
 		processTxsFn:  processTxsFn,
 		fetchTxDataFn: fetchTxDataFn,
@@ -169,6 +179,7 @@ func (w *TxWorker) Start() error {
 			w.log("job [%v-%v] received", job.From, job.To)
 
 			for _, tx := range txs {
+
 				// Fetch full transaction data only if fetchTxDataFn approves.
 				if w.fetchTxDataFn(tx.Hash) {
 					if ok, err := w.fetchBatch(&batch, rpc.BatchElem{
@@ -180,6 +191,7 @@ func (w *TxWorker) Start() error {
 
 						return
 					} else if !ok {
+
 						break main_loop
 					}
 				}
@@ -194,8 +206,10 @@ func (w *TxWorker) Start() error {
 
 					return
 				} else if !ok {
+
 					break main_loop
 				}
+
 			}
 
 			// Flush any remaining batch elements that didn't reach batchSize.
@@ -205,6 +219,7 @@ func (w *TxWorker) Start() error {
 
 					return
 				} else if !ok {
+
 					break main_loop
 				}
 
@@ -220,6 +235,7 @@ func (w *TxWorker) Start() error {
 			w.doneCh <- w.id
 
 			w.log("job processed")
+
 		}
 
 		w.shutDown(nil)
@@ -233,7 +249,7 @@ func (w *TxWorker) Start() error {
 // shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [TxWorker.errCh].
 func (w *TxWorker) shutDown(err error) {
 	if err != nil {
-		w.log("%s", err.Error())
+		w.logErr("%s", err.Error())
 
 		w.errCh <- struct {
 			Err error
@@ -244,13 +260,59 @@ func (w *TxWorker) shutDown(err error) {
 	w.log("shut down")
 }
 
-func (w *TxWorker) log(str string, args ...any) {
-	if w.logger != nil {
-		w.logger.Log(fmt.Sprintf("%s [tx worker - %v] %s",
-			time.Now().UTC().Format("15:04:05.000"),
-			w.id,
-			fmt.Sprintf(str, args...)))
+// log records a lifecycle event at info level. Prefer [TxWorker.logCtx] wherever a
+// context is in scope: it adds the trace and span IDs that join the line to its trace.
+func (w *TxWorker) log(msg string, args ...any) {
+	w.emit(context.Background(), slog.LevelInfo, msg, args...)
+}
+
+// logCtx records a lifecycle event at info level, tagged with the active span's IDs.
+func (w *TxWorker) logCtx(ctx context.Context, msg string, args ...any) {
+	w.emit(ctx, slog.LevelInfo, msg, args...)
+}
+
+// logWarn reports a recoverable problem at warn level: something failed but the
+// component is retrying or degrading rather than stopping.
+func (w *TxWorker) logWarn(msg string, args ...any) {
+	w.emit(context.Background(), slog.LevelWarn, msg, args...)
+}
+
+// logWarnCtx reports a recoverable problem at warn level, tagged with the span's IDs.
+func (w *TxWorker) logWarnCtx(ctx context.Context, msg string, args ...any) {
+	w.emit(ctx, slog.LevelWarn, msg, args...)
+}
+
+// logErr reports a failure at error level. Failures must not be logged through [TxWorker.log]:
+// info is filtered out in normal operation, which would make the process fail silently.
+func (w *TxWorker) logErr(msg string, args ...any) {
+	w.emit(context.Background(), slog.LevelError, msg, args...)
+}
+
+// logErrCtx reports a failure at error level, tagged with the active span's IDs.
+func (w *TxWorker) logErrCtx(ctx context.Context, msg string, args ...any) {
+	w.emit(ctx, slog.LevelError, msg, args...)
+}
+
+// emit is the single place that formats a message and attaches the component identity
+// and trace correlation fields. The level check short-circuits before the Sprintf, which
+// matters because every call site formats eagerly.
+func (w *TxWorker) emit(ctx context.Context, level slog.Level, msg string, args ...any) {
+	// Tolerate a zero-value struct: tests construct these directly, and a missing
+	// logger must not turn a log line into a nil dereference.
+	logger := w.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
+
+	if !logger.Enabled(ctx, level) {
+		return
+	}
+
+	attrs := make([]any, 0, 8)
+	attrs = append(attrs, "component", componentName, "worker_id", w.id)
+	attrs = append(attrs, tracing.LogFields(ctx)...)
+
+	logger.Log(ctx, level, fmt.Sprintf(msg, args...), attrs...)
 }
 
 // fetchBatch is responsible for fetching data through a batch RPC call. Fetching is deferred
@@ -284,11 +346,11 @@ func (w *TxWorker) fetchBatch(batch *[]rpc.BatchElem, elem rpc.BatchElem) (bool,
 func (w *TxWorker) sendBatch(batch []rpc.BatchElem) (bool, error) {
 	for i := int64(1); ; i++ {
 		if err := w.client.BatchCallContext(context.TODO(), batch); err != nil {
-			w.log("(batch) RPC call failed: %v", err)
+			w.logWarn("(batch) RPC call failed: %v", err)
 
 			// If [TxWorker.maxRetries] is -1, retry indefinitely.
 			if i == w.maxRetries {
-				w.log("giving up...")
+				w.logErr("giving up...")
 
 				return false, fmt.Errorf("cannot execute (batch) RPC call: %w", err)
 			}
@@ -311,7 +373,7 @@ func (w *TxWorker) sendBatch(batch []rpc.BatchElem) (bool, error) {
 	// This should never happen! Log and proceed.
 	for _, elem := range batch {
 		if elem.Error != nil {
-			w.log("%s RPC call failed for %v: %v", elem.Method, elem.Args[0], elem.Error)
+			w.logErr("%s RPC call failed for %v: %v", elem.Method, elem.Args[0], elem.Error)
 		}
 	}
 

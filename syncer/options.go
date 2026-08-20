@@ -2,17 +2,19 @@ package syncer
 
 import (
 	"fmt"
-
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
+	"log/slog"
 )
 
 type SyncerOption func(*Syncer) error
 
 // WithLogger configures the syncer to log its state changes and actions during its lifecycle.
-// By default, no logging is performed. You can use [helper.DefaultLogger] to log to standard
-// output using fmt formatting.
-func WithLogger(logger types.Logger) SyncerOption {
+// Defaults to [logging.Default]: JSON at info level on stdout.
+func WithLogger(logger *slog.Logger) SyncerOption {
 	return func(s *Syncer) error {
+		if logger == nil {
+			return fmt.Errorf("logger cannot be nil")
+		}
+
 		s.logger = logger
 
 		return nil
@@ -158,11 +160,16 @@ func WithMetrics(addr string) SyncerOption {
 	}
 }
 
-// WithTracing enables OpenTelemetry tracing, exporting spans over OTLP/gRPC to the given
-// endpoint (e.g. "http://localhost:4317"). An empty endpoint disables tracing.
+// WithTracing sets the OTLP/gRPC collector endpoint for span export (e.g.
+// "http://localhost:4317"). An empty endpoint falls back to the standard
+// OTEL_EXPORTER_OTLP_TRACES_ENDPOINT / OTEL_EXPORTER_OTLP_ENDPOINT variables.
+//
+// Note that this configures export only. Tracing itself is always active: with no
+// endpoint from any source, spans are still created and still carry valid trace IDs,
+// so logs remain correlatable and outbound node RPC still propagates traceparent.
+// Nothing is shipped to a collector.
 func WithTracing(endpoint string) SyncerOption {
 	return func(s *Syncer) error {
-		s.tracingEnabled = endpoint != ""
 		s.tracingEndpoint = endpoint
 
 		return nil

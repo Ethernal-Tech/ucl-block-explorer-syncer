@@ -2,17 +2,19 @@ package blockworker
 
 import (
 	"fmt"
-
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
+	"log/slog"
 )
 
 type BlockWorkerOption func(*BlockWorker) error
 
 // WithLogger configures the block worker to log its state changes and actions during its
-// lifecycle. By default, no logging is performed. You can use [helper.DefaultLogger] to log
-// to standard output using fmt formatting.
-func WithLogger(logger types.Logger) BlockWorkerOption {
+// lifecycle. Defaults to [logging.Default]: JSON at info level on stdout.
+func WithLogger(logger *slog.Logger) BlockWorkerOption {
 	return func(w *BlockWorker) error {
+		if logger == nil {
+			return fmt.Errorf("logger cannot be nil")
+		}
+
 		w.logger = logger
 
 		return nil

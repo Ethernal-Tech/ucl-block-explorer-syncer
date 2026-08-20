@@ -3,7 +3,7 @@ package storage_handler
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -35,7 +35,12 @@ const IstanbulExtraVanity = 32
 func RecoverIBFTProposer(blockHashHex, extraDataHex string) string {
 	addr, err := recoverIBFTProposer(blockHashHex, extraDataHex)
 	if err != nil {
-		log.Printf("storage_handler: IBFT proposer recovery failed for block %s: %v", blockHashHex, err)
+		// Warn rather than error: the caller falls back to ZeroAddress and block
+		// insertion continues, so this degrades a derived field rather than failing.
+		slog.Warn("IBFT proposer recovery failed",
+			"component", "storage_handler",
+			"block_hash", blockHashHex,
+			"error", err.Error())
 
 		return ZeroAddress
 	}

@@ -2,10 +2,10 @@ package prologworker_test
 
 import (
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	prologworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/prolog_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/stretchr/testify/assert"
@@ -71,7 +71,7 @@ func Test_LifecycleAndFiltering(t *testing.T) {
 			prologworker.WithStartBlock(10),
 			prologworker.WithLastBlock(10),
 			prologworker.WithProcessInterval(200),
-			prologworker.WithLogger(helper.DefaultLogger{}),
+			prologworker.WithLogger(slog.Default()),
 			prologworker.WithID("1"),
 		)
 
@@ -118,7 +118,7 @@ func Test_LifecycleAndFiltering(t *testing.T) {
 			errCh,
 			prologworker.WithStartBlock(1),
 			prologworker.WithProcessInterval(200),
-			prologworker.WithLogger(helper.DefaultLogger{}),
+			prologworker.WithLogger(slog.Default()),
 			prologworker.WithID("1"),
 		)
 

@@ -3,11 +3,11 @@ package txworker_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	txworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/tx_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -68,7 +68,7 @@ func Test_Retry(t *testing.T) {
 			jobCh,
 			errCh,
 			txworker.WithRetry(3, 200),
-			txworker.WithLogger(helper.DefaultLogger{}),
+			txworker.WithLogger(slog.Default()),
 			txworker.WithID(1),
 			txworker.WithBatchSize(2),
 		)
@@ -123,7 +123,7 @@ func Test_Retry(t *testing.T) {
 			jobCh,
 			errCh,
 			txworker.WithRetry(3, 200),
-			txworker.WithLogger(helper.DefaultLogger{}),
+			txworker.WithLogger(slog.Default()),
 			txworker.WithID(2),
 			txworker.WithBatchSize(2),
 		)
