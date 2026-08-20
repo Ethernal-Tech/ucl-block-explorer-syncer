@@ -27,6 +27,7 @@ import (
 	txpoolworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/txpool_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning"
 )
 
 const emptyBlockSentinel = "notx"
@@ -317,14 +318,12 @@ type Syncer struct {
 	// metricsAddr is the TCP listen address for the /metrics endpoint. Only used when metricsEnabled.
 	metricsAddr string
 
-	// tracingEnabled gates OpenTelemetry tracing: trace propagation on outbound node RPC.
-	// Enabled via [WithTracing] with a non-empty endpoint. By default, false.
-	tracingEnabled bool
-
-	// tracingEndpoint is the OTLP trace collector endpoint. Only used when tracingEnabled.
+	// tracingEndpoint is the OTLP trace collector endpoint, set via [WithTracing]. Empty means
+	// spans are created but not exported; tracing itself is always on, since trace IDs are
+	// what join the syncer's logs to its traces.
 	tracingEndpoint string
 
-	// tracerShutdown flushes and stops the tracer provider on shutdown. nil when tracing is off.
+	// tracerShutdown flushes and stops the tracer provider on shutdown. nil when init failed.
 	tracerShutdown func(context.Context) error
 
 	// Internal fields used by the syncer:
@@ -573,23 +572,23 @@ func (s *Syncer) Start() error {
 	}
 
 	// Set up tracing before the workers start making RPC calls, so their outbound
-	// requests carry the W3C traceparent from the very first block.
-	if s.tracingEnabled {
-		shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint)
-		if err != nil {
-			s.logWarn("tracing init failed: %v", err)
-		} else {
-			s.tracerShutdown = shutdown
+	// requests carry the W3C traceparent from the very first block. This runs even
+	// with no collector configured: the provider then exports nothing, but spans
+	// still carry valid trace IDs for log correlation and outbound propagation.
+	shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint, versioning.Version)
+	if err != nil {
+		s.logWarn("tracing init failed: %v", err)
+	} else {
+		s.tracerShutdown = shutdown
 
-			defer func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 
-				if err := shutdown(ctx); err != nil {
-					s.logWarn("tracer shutdown error: %v", err)
-				}
-			}()
-		}
+			if err := shutdown(ctx); err != nil {
+				s.logWarn("tracer shutdown error: %v", err)
+			}
+		}()
 	}
 
 	if err := s.bwHandle.bw.Start(); err != nil {
@@ -1166,13 +1165,11 @@ func (s *Syncer) Start() error {
 	return nil
 }
 
-// dialRPC opens an RPC client to the node. When tracing is enabled it wraps the HTTP transport
-// with otelhttp so outbound requests carry the active span's W3C traceparent.
+// dialRPC opens an RPC client to the node, wrapping the HTTP transport with otelhttp so
+// outbound requests carry the active span's W3C traceparent. This is unconditional: header
+// propagation costs nothing when no collector is configured, and it is what lets the node
+// join the syncer's trace even in environments that do not export spans themselves.
 func (s *Syncer) dialRPC(rpcURL string) (*rpc.Client, error) {
-	if !s.tracingEnabled {
-		return rpc.Dial(rpcURL)
-	}
-
 	httpClient := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 	return rpc.DialOptions(context.Background(), rpcURL, rpc.WithHTTPClient(httpClient))
