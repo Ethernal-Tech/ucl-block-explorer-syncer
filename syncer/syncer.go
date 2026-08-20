@@ -28,6 +28,8 @@ import (
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const emptyBlockSentinel = "notx"
@@ -743,18 +745,31 @@ func (s *Syncer) Start() error {
 			// the txs-processed counter reflects only real transactions.
 			realTxCount := len(block.Transactions)
 
+			// The block span parents every worker span for this block. It is started
+			// here rather than at the top of the iteration so it covers exactly the
+			// fan-out and the wait, which is the work the tx workers actually do.
+			blockCtx, blockSpan := tracing.Tracer().Start(context.Background(), "block.index",
+				trace.WithAttributes(
+					attribute.Int64("block.number", int64(currentBlock)),
+					attribute.Int("block.tx_count", realTxCount),
+				))
+
 			jobs := helper.CreateJobs(uint64(len(block.Transactions)), uint64(len(s.txwHandles)))
 
-			s.log("%v jobs created", len(jobs))
+			s.logCtx(blockCtx, "%v jobs created", len(jobs))
 
 			for i, job := range jobs {
 				job.Block = block
+
+				// Carries the block's trace context across the channel into the worker
+				// goroutine, which has no other way to reach it.
+				job.Ctx = blockCtx
 
 				s.txwHandles[i].jobCh <- job
 
 				s.txJobsInFlight.Add(1)
 
-				s.log("job [%v-%v] dispatched", job.From, job.To)
+				s.logCtx(blockCtx, "job [%v-%v] dispatched", job.From, job.To)
 			}
 
 			l := len(jobs)
@@ -777,6 +792,8 @@ func (s *Syncer) Start() error {
 					l--
 				}
 			}
+
+			blockSpan.End()
 
 			if errOcured != 0 {
 				shutDownFn(errOcured)

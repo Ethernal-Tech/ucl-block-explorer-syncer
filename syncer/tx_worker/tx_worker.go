@@ -9,6 +9,9 @@ import (
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	"github.com/ethereum/go-ethereum/rpc"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // componentName labels every log line from this package, so Loki queries can
@@ -18,6 +21,13 @@ const componentName = "tx_worker"
 // TxJob represents a unit of work assigned to a [TxWorker], defining the range of transactions
 // within a block that the worker is responsible for fetching and processing.
 type TxJob struct {
+	// Ctx carries the trace context of the block that produced this job. Jobs cross a
+	// channel into another goroutine, so this is the only way the worker's spans can be
+	// parented to the block being indexed. Storing a context in a struct is normally
+	// discouraged, but a queued work item is the documented exception: there is no call
+	// stack to thread it through. Nil is tolerated and yields unparented spans.
+	Ctx context.Context
+
 	// Block is the block whose transactions are being processed.
 	Block *types.Block
 
@@ -176,49 +186,78 @@ func (w *TxWorker) Start() error {
 		for job := range w.jobCh {
 			txs := job.Block.Transactions[job.From:job.To]
 
-			w.log("job [%v-%v] received", job.From, job.To)
+			jobCtx := job.Ctx
+			if jobCtx == nil {
+				jobCtx = context.Background()
+			}
+
+			jobCtx, jobSpan := tracing.Tracer().Start(jobCtx, "tx.job",
+				trace.WithAttributes(
+					attribute.Int64("block.number", int64(job.Block.Number)),
+					attribute.Int64("tx.range.from", int64(job.From)),
+					attribute.Int64("tx.range.to", int64(job.To)),
+				))
+
+			w.logCtx(jobCtx, "job [%v-%v] received", job.From, job.To)
 
 			for _, tx := range txs {
+				// One span per transaction is what makes an individual transaction
+				// findable by hash in the backend. The RPC calls below are batched
+				// across transactions, so they are siblings of this span rather than
+				// children of it - a batch belongs to the job, not to one transaction.
+				_, txSpan := tracing.Tracer().Start(jobCtx, "tx.process",
+					trace.WithAttributes(attribute.String("tx.hash", tx.Hash)))
 
 				// Fetch full transaction data only if fetchTxDataFn approves.
 				if w.fetchTxDataFn(tx.Hash) {
-					if ok, err := w.fetchBatch(&batch, rpc.BatchElem{
+					if ok, err := w.fetchBatch(jobCtx, &batch, rpc.BatchElem{
 						Method: "eth_getTransactionByHash",
 						Args:   []any{tx.Hash},
 						Result: tx,
 					}); err != nil {
+						txSpan.End()
+						jobSpan.End()
 						w.shutDown(err)
 
 						return
 					} else if !ok {
+						txSpan.End()
+						jobSpan.End()
 
 						break main_loop
 					}
 				}
 
 				// Transaction receipt is always fetched.
-				if ok, err := w.fetchBatch(&batch, rpc.BatchElem{
+				if ok, err := w.fetchBatch(jobCtx, &batch, rpc.BatchElem{
 					Method: "eth_getTransactionReceipt",
 					Args:   []any{tx.Hash},
 					Result: tx,
 				}); err != nil {
+					txSpan.End()
+					jobSpan.End()
 					w.shutDown(err)
 
 					return
 				} else if !ok {
+					txSpan.End()
+					jobSpan.End()
 
 					break main_loop
 				}
 
+				txSpan.End()
 			}
 
 			// Flush any remaining batch elements that didn't reach batchSize.
 			if len(batch) > 0 {
-				if ok, err := w.sendBatch(batch); err != nil {
+				if ok, err := w.sendBatch(jobCtx, batch); err != nil {
+					jobSpan.End()
 					w.shutDown(err)
 
 					return
 				} else if !ok {
+					jobSpan.End()
 
 					break main_loop
 				}
@@ -227,6 +266,7 @@ func (w *TxWorker) Start() error {
 			}
 
 			if err := w.processTxsFn(txs); err != nil {
+				jobSpan.End()
 				w.shutDown(fmt.Errorf("cannot process transactions: %w", err))
 
 				return
@@ -234,8 +274,9 @@ func (w *TxWorker) Start() error {
 
 			w.doneCh <- w.id
 
-			w.log("job processed")
+			w.logCtx(jobCtx, "job processed")
 
+			jobSpan.End()
 		}
 
 		w.shutDown(nil)
@@ -321,14 +362,14 @@ func (w *TxWorker) emit(ctx context.Context, level slog.Level, msg string, args 
 // the batch fetching was successful (see [TxWorker.sendBatch] for possible scenarios). Note
 // that deferred fetching (currently not enough elements to fill the batch) is also considered
 // a valid case, so (true, nil) is returned in that case as well.
-func (w *TxWorker) fetchBatch(batch *[]rpc.BatchElem, elem rpc.BatchElem) (bool, error) {
+func (w *TxWorker) fetchBatch(ctx context.Context, batch *[]rpc.BatchElem, elem rpc.BatchElem) (bool, error) {
 	*batch = append(*batch, elem)
 
 	if uint64(len(*batch)) < w.batchSize {
 		return true, nil
 	}
 
-	ok, err := w.sendBatch(*batch)
+	ok, err := w.sendBatch(ctx, *batch)
 	if !ok || err != nil {
 		return ok, err
 	}
@@ -343,14 +384,21 @@ func (w *TxWorker) fetchBatch(batch *[]rpc.BatchElem, elem rpc.BatchElem) (bool,
 //  1. (true, nil)  - batch call was successful.
 //  2. (false, nil) - batch call was not successful; [TxWorker.jobCh] was closed during a retry.
 //  3. (false, err) - batch call was not successful; [TxWorker.maxRetries] was reached.
-func (w *TxWorker) sendBatch(batch []rpc.BatchElem) (bool, error) {
+func (w *TxWorker) sendBatch(ctx context.Context, batch []rpc.BatchElem) (bool, error) {
+	ctx, span := tracing.Tracer().Start(ctx, "rpc.batch",
+		trace.WithAttributes(attribute.Int("rpc.batch.size", len(batch))))
+	defer span.End()
+
 	for i := int64(1); ; i++ {
-		if err := w.client.BatchCallContext(context.TODO(), batch); err != nil {
-			w.logWarn("(batch) RPC call failed: %v", err)
+		// context.TODO here used to leave every InstrumentedRPCClient span an orphaned
+		// root; passing the job's context is what nests them under the block.
+		if err := w.client.BatchCallContext(ctx, batch); err != nil {
+			w.logWarnCtx(ctx, "(batch) RPC call failed: %v", err)
 
 			// If [TxWorker.maxRetries] is -1, retry indefinitely.
 			if i == w.maxRetries {
-				w.logErr("giving up...")
+				w.logErrCtx(ctx, "giving up...")
+				span.SetStatus(codes.Error, "batch RPC call failed")
 
 				return false, fmt.Errorf("cannot execute (batch) RPC call: %w", err)
 			}
