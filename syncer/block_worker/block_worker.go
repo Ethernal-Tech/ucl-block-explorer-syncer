@@ -11,6 +11,9 @@ import (
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // componentName labels every log line from this package, so Loki queries can
@@ -226,7 +229,12 @@ func (w *BlockWorker) Start() error {
 
 	break_for:
 		for {
-			w.log("fetching block %v", currentBlockNumber)
+			// One span per block fetch. Without it the InstrumentedRPCClient spans below
+			// are orphaned roots, and this worker's log lines carry no trace ID.
+			ctx, span := tracing.Tracer().Start(context.Background(), "block.fetch",
+				trace.WithAttributes(attribute.Int64("block.number", int64(currentBlockNumber))))
+
+			w.logCtx(ctx, "fetching block %v", currentBlockNumber)
 
 			var block *types.Block
 
@@ -236,17 +244,19 @@ func (w *BlockWorker) Start() error {
 				var raw json.RawMessage
 
 				if err := w.client.CallContext(
-					context.TODO(),
+					ctx,
 					&raw,
 					"eth_getBlockByNumber",
 					hexutil.EncodeBig(new(big.Int).SetUint64(currentBlockNumber)),
 					w.withTxs,
 				); err != nil {
-					w.logWarn("RPC call failed: %v", err)
+					w.logWarnCtx(ctx, "RPC call failed: %v", err)
 
 					// If [BlockWorker.maxRetries] is -1, retry indefinitely.
 					if i == w.maxRetries {
-						w.logErr("giving up...")
+						w.logErrCtx(ctx, "giving up...")
+						span.SetStatus(codes.Error, "block fetch failed")
+						span.End()
 
 						w.shutDown(fmt.Errorf("cannot execute RPC call: %w", err))
 
@@ -254,6 +264,8 @@ func (w *BlockWorker) Start() error {
 					}
 
 					if waitFn(interval) {
+						span.End()
+
 						break break_for
 					}
 
@@ -262,11 +274,13 @@ func (w *BlockWorker) Start() error {
 
 				parsedBlock, err := ParseRawBlock(raw)
 				if err != nil {
-					w.logErr("cannot parse block: %v", err)
+					w.logErrCtx(ctx, "cannot parse block: %v", err)
 
 					// If [BlockWorker.maxRetries] is -1, retry indefinitely.
 					if i == w.maxRetries {
-						w.logErr("giving up...")
+						w.logErrCtx(ctx, "giving up...")
+						span.SetStatus(codes.Error, "block parse failed")
+						span.End()
 
 						w.shutDown(fmt.Errorf("cannot parse block %d: %w", currentBlockNumber, err))
 
@@ -274,6 +288,8 @@ func (w *BlockWorker) Start() error {
 					}
 
 					if waitFn(interval) {
+						span.End()
+
 						break break_for
 					}
 
@@ -284,6 +300,9 @@ func (w *BlockWorker) Start() error {
 
 				break
 			}
+
+			// The fetch is done; block processing downstream gets its own trace.
+			span.End()
 
 			interval = time.Duration(w.pollInterval) * time.Millisecond
 

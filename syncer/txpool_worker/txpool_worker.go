@@ -11,6 +11,8 @@ import (
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // componentName labels every log line from this package, so Loki queries can
@@ -130,6 +132,12 @@ func (w *TxPoolWorker) Start() error {
 	}
 
 	fetchFn := func() ([]*types.Transaction, []*types.Transaction, error) {
+		// One span per pool fetch. Without it the InstrumentedRPCClient span below is an
+		// orphaned root and this worker's log lines carry no trace ID. fetchFn is a
+		// closure, so a deferred End covers every return path.
+		ctx, span := tracing.Tracer().Start(context.Background(), "txpool.fetch")
+		defer span.End()
+
 		var content struct {
 			Pending map[string]map[string]json.RawMessage `json:"pending"`
 			Queued  map[string]map[string]json.RawMessage `json:"queued"`
@@ -139,15 +147,16 @@ func (w *TxPoolWorker) Start() error {
 
 		for i := int64(1); ; i++ {
 			if err := w.client.CallContext(
-				context.TODO(),
+				ctx,
 				&content,
 				"txpool_content",
 			); err != nil {
-				w.logWarn("RPC call failed: %v", err)
+				w.logWarnCtx(ctx, "RPC call failed: %v", err)
 
 				// If [TxPoolWorker.maxRetries] is -1, retry indefinitely.
 				if i == w.maxRetries {
-					w.logErr("giving up...")
+					w.logErrCtx(ctx, "giving up...")
+					span.SetStatus(codes.Error, "txpool fetch failed")
 
 					return nil, nil, fmt.Errorf("cannot execute RPC call: %w", err)
 				}
@@ -183,6 +192,11 @@ func (w *TxPoolWorker) Start() error {
 				queued = append(queued, &tx)
 			}
 		}
+
+		span.SetAttributes(
+			attribute.Int("txpool.pending", len(pending)),
+			attribute.Int("txpool.queued", len(queued)),
+		)
 
 		return pending, queued, nil
 	}

@@ -2022,7 +2022,7 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 
 	currentBlock := s.eoaActivityStartBlock
 
-	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
+	processFn := func(ctx context.Context, log func(string, ...any)) (done bool, wait bool, err error) {
 		log("processing block %v", currentBlock)
 
 		participants, err := s.eoaActivityBackend.GetBlockParticipants(currentBlock)
@@ -2066,7 +2066,7 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 			var code hexutil.Bytes
 
 			for i := int64(1); ; i++ {
-				if err := client.CallContext(context.TODO(),
+				if err := client.CallContext(ctx,
 					&code,
 					"eth_getCode",
 					addr,
@@ -2160,7 +2160,7 @@ func (s *Syncer) createESGAggregationWorkerHandle(
 		Id  string
 	}, 1)
 
-	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
+	processFn := func(ctx context.Context, log func(string, ...any)) (done bool, wait bool, err error) {
 		return s.esgAggregationBackend.Process(ctx, log)
 	}
 

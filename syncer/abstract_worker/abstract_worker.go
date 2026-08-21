@@ -20,15 +20,18 @@ import (
 // true or the worker is signaled to stop, the worker initiates a graceful shutdown and sends
 // a signal to [AbstractWorker.doneCh] upon completing it.
 type AbstractWorker struct {
-	// processFn is a callback invoked repeatedly by the worker. The provided log function can
-	// be used for logging within the callback if [WithLogger] has been configured - it is a
-	// no-op otherwise. Returning true as the first value signals the worker that processing
+	// processFn is a callback invoked repeatedly by the worker. Each invocation gets its
+	// own span; ctx carries it, so RPC calls made from the callback nest under this
+	// worker rather than starting orphaned roots, and the provided log function tags its
+	// lines with the matching trace ID.
+	//
+	// Returning true as the first value signals the worker that processing
 	// is complete and it should shut down gracefully. Returning true as the second value
 	// signals the worker to wait for the duration defined by [AbstractWorker.processInterval]
 	// before the next iteration/invocation. Returning an error causes the worker to stop and
 	// report it via [AbstractWorker.errCh]. If both done (first value as true) and an error
 	// are returned in the same call, the error takes precedence and done is ignored.
-	processFn func(log func(string, ...any)) (done bool, wait bool, err error)
+	processFn func(ctx context.Context, log func(string, ...any)) (done bool, wait bool, err error)
 
 	// ctrlCh is the channel through which an external caller can pause and resume the worker.
 	// Sending a signal pauses the worker, sending another resumes it, alternating with each
@@ -91,7 +94,7 @@ type AbstractWorker struct {
 //  3. [WithWorkerType] (default: "abstract")
 //  4. [WithProcessInterval] (default: 2000 milliseconds)
 func NewAbstractWorker(
-	processFn func(log func(string, ...any)) (bool, bool, error),
+	processFn func(ctx context.Context, log func(string, ...any)) (bool, bool, error),
 	ctrlCh <-chan struct{},
 	doneCh chan<- string,
 	errCh chan<- struct {
@@ -148,7 +151,17 @@ func (w *AbstractWorker) Start() error {
 
 	break_for:
 		for {
-			done, wait, err := w.processFn(w.log)
+			ctx, span := tracing.Tracer().Start(
+				context.Background(), w.workerType+".process")
+
+			// The callback logs through this, so its lines carry the span's trace ID
+			// without every call site needing to thread ctx itself.
+			logCtx := func(msg string, args ...any) { w.logCtx(ctx, msg, args...) }
+
+			done, wait, err := w.processFn(ctx, logCtx)
+
+			span.End()
+
 			if err != nil {
 				w.shutDown(err)
 

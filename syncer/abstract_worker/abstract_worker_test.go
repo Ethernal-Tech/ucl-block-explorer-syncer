@@ -1,6 +1,7 @@
 package abstractworker_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,7 +23,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 		}, 1)
 
 		calls := 0
-		processFn := func(log func(string, ...any)) (bool, bool, error) {
+		processFn := func(ctx context.Context, log func(string, ...any)) (bool, bool, error) {
 			calls++
 
 			if calls == 3 {
@@ -68,7 +69,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 		}, 1)
 
 		expectedErr := errors.New("some error")
-		processFn := func(log func(string, ...any)) (bool, bool, error) {
+		processFn := func(ctx context.Context, log func(string, ...any)) (bool, bool, error) {
 			return false, false, expectedErr
 		}
 
@@ -108,7 +109,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 		mut := sync.RWMutex{}
 		counter := 0
 
-		processFn := func(log func(string, ...any)) (bool, bool, error) {
+		processFn := func(ctx context.Context, log func(string, ...any)) (bool, bool, error) {
 			mut.Lock()
 			defer mut.Unlock()
 
