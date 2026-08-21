@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
@@ -14,12 +15,12 @@ import (
 
 type PgDataAnchorBackend struct {
 	db     *sql.DB
-	logger types.Logger
+	logger *slog.Logger
 }
 
-func NewPgDataAnchorBackend(db *sql.DB, logger ...types.Logger) *PgDataAnchorBackend {
-	backend := &PgDataAnchorBackend{db: db}
-	if len(logger) > 0 {
+func NewPgDataAnchorBackend(db *sql.DB, logger ...*slog.Logger) *PgDataAnchorBackend {
+	backend := &PgDataAnchorBackend{db: db, logger: slog.Default()}
+	if len(logger) > 0 && logger[0] != nil {
 		backend.logger = logger[0]
 	}
 
@@ -373,7 +374,10 @@ func hasFirstTopic(log *types.ReceiptLog, topic common.Hash) bool {
 }
 
 func (b *PgDataAnchorBackend) log(format string, args ...any) {
-	if b.logger != nil {
-		b.logger.Log(fmt.Sprintf(format, args...))
+	logger := b.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
+
+	logger.Info(fmt.Sprintf(format, args...), "component", "data_anchor_backend")
 }

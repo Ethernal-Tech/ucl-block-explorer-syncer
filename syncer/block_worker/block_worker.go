@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"time"
 
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+// componentName labels every log line from this package, so Loki queries can
+// filter to one worker type without parsing the message.
+const componentName = "block_worker"
 
 type rpcClient interface {
 	CallContext(
@@ -48,9 +57,9 @@ type BlockWorker struct {
 
 	// Optional fields (settable through [NewBlockWorker] constructor function):
 
-	// logger records state changes and actions during the syncer's lifecycle. By default, no
-	// logging is performed.
-	logger types.Logger
+	// logger records state changes and actions during the syncer's lifecycle. Defaults to
+	// the process-wide slog logger; never silent.
+	logger *slog.Logger
 
 	// id is the unique identifier of the worker. By default, it is set to zero.
 	id uint64
@@ -95,7 +104,7 @@ type BlockWorker struct {
 // invoked once for each fetched block, see [BlockWorker.processBlockFn] for details.
 //
 // The following optional configurations are available (see their documentation for details):
-//  1. WithLogger (default: no logging)
+//  1. WithLogger (default: the process-wide slog logger)
 //  2. WithID (default: 0)
 //  3. WithRetry (default: first failure is treated as fatal)
 //  4. WithStartBlock (default: 0)
@@ -124,6 +133,10 @@ func NewBlockWorker(
 	}
 
 	worker := &BlockWorker{
+		// Never nil: components fall back to the process default so a syncer started
+		// without WithLogger still reports what it is doing.
+		logger: slog.Default(),
+
 		client:         client,
 		processBlockFn: processBlockFn,
 		ctrlCh:         ctrlCh,
@@ -216,7 +229,12 @@ func (w *BlockWorker) Start() error {
 
 	break_for:
 		for {
-			w.log("fetching block %v", currentBlockNumber)
+			// One span per block fetch. Without it the InstrumentedRPCClient spans below
+			// are orphaned roots, and this worker's log lines carry no trace ID.
+			ctx, span := tracing.Tracer().Start(context.Background(), "block.fetch",
+				trace.WithAttributes(attribute.Int64("block.number", int64(currentBlockNumber))))
+
+			w.logCtx(ctx, "fetching block %v", currentBlockNumber)
 
 			var block *types.Block
 
@@ -226,17 +244,19 @@ func (w *BlockWorker) Start() error {
 				var raw json.RawMessage
 
 				if err := w.client.CallContext(
-					context.TODO(),
+					ctx,
 					&raw,
 					"eth_getBlockByNumber",
 					hexutil.EncodeBig(new(big.Int).SetUint64(currentBlockNumber)),
 					w.withTxs,
 				); err != nil {
-					w.log("RPC call failed: %v", err)
+					w.logWarnCtx(ctx, "RPC call failed: %v", err)
 
 					// If [BlockWorker.maxRetries] is -1, retry indefinitely.
 					if i == w.maxRetries {
-						w.log("giving up...")
+						w.logErrCtx(ctx, "giving up...")
+						span.SetStatus(codes.Error, "block fetch failed")
+						span.End()
 
 						w.shutDown(fmt.Errorf("cannot execute RPC call: %w", err))
 
@@ -244,6 +264,8 @@ func (w *BlockWorker) Start() error {
 					}
 
 					if waitFn(interval) {
+						span.End()
+
 						break break_for
 					}
 
@@ -252,11 +274,13 @@ func (w *BlockWorker) Start() error {
 
 				parsedBlock, err := ParseRawBlock(raw)
 				if err != nil {
-					w.log("cannot parse block: %v", err)
+					w.logErrCtx(ctx, "cannot parse block: %v", err)
 
 					// If [BlockWorker.maxRetries] is -1, retry indefinitely.
 					if i == w.maxRetries {
-						w.log("giving up...")
+						w.logErrCtx(ctx, "giving up...")
+						span.SetStatus(codes.Error, "block parse failed")
+						span.End()
 
 						w.shutDown(fmt.Errorf("cannot parse block %d: %w", currentBlockNumber, err))
 
@@ -264,6 +288,8 @@ func (w *BlockWorker) Start() error {
 					}
 
 					if waitFn(interval) {
+						span.End()
+
 						break break_for
 					}
 
@@ -274,6 +300,9 @@ func (w *BlockWorker) Start() error {
 
 				break
 			}
+
+			// The fetch is done; block processing downstream gets its own trace.
+			span.End()
 
 			interval = time.Duration(w.pollInterval) * time.Millisecond
 
@@ -337,7 +366,7 @@ func ParseRawBlock(raw json.RawMessage) (*types.Block, error) {
 // shutDown gracefully shuts down the worker. If err is non-nil, it is sent to [BlockWorker.errCh].
 func (w *BlockWorker) shutDown(err error) {
 	if err != nil {
-		w.log("%s", err.Error())
+		w.logErr("%s", err.Error())
 
 		w.errCh <- err
 	}
@@ -345,11 +374,57 @@ func (w *BlockWorker) shutDown(err error) {
 	w.log("shut down")
 }
 
-func (w *BlockWorker) log(str string, args ...any) {
-	if w.logger != nil {
-		w.logger.Log(fmt.Sprintf("%s [block worker - %v] %s",
-			time.Now().UTC().Format("15:04:05.000"),
-			w.id,
-			fmt.Sprintf(str, args...)))
+// log records a lifecycle event at info level. Prefer [BlockWorker.logCtx] wherever a
+// context is in scope: it adds the trace and span IDs that join the line to its trace.
+func (w *BlockWorker) log(msg string, args ...any) {
+	w.emit(context.Background(), slog.LevelInfo, msg, args...)
+}
+
+// logCtx records a lifecycle event at info level, tagged with the active span's IDs.
+func (w *BlockWorker) logCtx(ctx context.Context, msg string, args ...any) {
+	w.emit(ctx, slog.LevelInfo, msg, args...)
+}
+
+// logWarn reports a recoverable problem at warn level: something failed but the
+// component is retrying or degrading rather than stopping.
+func (w *BlockWorker) logWarn(msg string, args ...any) {
+	w.emit(context.Background(), slog.LevelWarn, msg, args...)
+}
+
+// logWarnCtx reports a recoverable problem at warn level, tagged with the span's IDs.
+func (w *BlockWorker) logWarnCtx(ctx context.Context, msg string, args ...any) {
+	w.emit(ctx, slog.LevelWarn, msg, args...)
+}
+
+// logErr reports a failure at error level. Failures must not be logged through [BlockWorker.log]:
+// info is filtered out in normal operation, which would make the process fail silently.
+func (w *BlockWorker) logErr(msg string, args ...any) {
+	w.emit(context.Background(), slog.LevelError, msg, args...)
+}
+
+// logErrCtx reports a failure at error level, tagged with the active span's IDs.
+func (w *BlockWorker) logErrCtx(ctx context.Context, msg string, args ...any) {
+	w.emit(ctx, slog.LevelError, msg, args...)
+}
+
+// emit is the single place that formats a message and attaches the component identity
+// and trace correlation fields. The level check short-circuits before the Sprintf, which
+// matters because every call site formats eagerly.
+func (w *BlockWorker) emit(ctx context.Context, level slog.Level, msg string, args ...any) {
+	// Tolerate a zero-value struct: tests construct these directly, and a missing
+	// logger must not turn a log line into a nil dereference.
+	logger := w.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
+
+	if !logger.Enabled(ctx, level) {
+		return
+	}
+
+	attrs := make([]any, 0, 8)
+	attrs = append(attrs, "component", componentName, "worker_id", w.id)
+	attrs = append(attrs, tracing.LogFields(ctx)...)
+
+	logger.Log(ctx, level, fmt.Sprintf(msg, args...), attrs...)
 }

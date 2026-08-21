@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	blockworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/block_worker"
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -83,7 +83,7 @@ func Test_Retry(t *testing.T) {
 			errCh,
 			blockworker.WithRetry(3, 200),
 			blockworker.WithPollInterval(200),
-			blockworker.WithLogger(helper.DefaultLogger{}),
+			blockworker.WithLogger(slog.Default()),
 		)
 		assert.NoError(t, err)
 
@@ -132,7 +132,7 @@ func Test_Retry(t *testing.T) {
 			doneCh,
 			errCh,
 			blockworker.WithRetry(3, 200),
-			blockworker.WithLogger(helper.DefaultLogger{}),
+			blockworker.WithLogger(slog.Default()),
 		)
 		assert.NoError(t, err)
 

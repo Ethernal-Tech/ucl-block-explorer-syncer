@@ -128,7 +128,3 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
-
-type Logger interface {
-	Log(string)
-}

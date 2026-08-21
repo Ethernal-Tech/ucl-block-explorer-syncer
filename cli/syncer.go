@@ -3,7 +3,6 @@ package cli
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
 
 	dataanchorbackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/data_anchor_backend"
@@ -11,9 +10,9 @@ import (
 	eoaactivitybackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/eoa_activity_backend"
 	erc20backend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/erc20_backend"
 	esgaggregationbackend "github.com/Ethernal-Tech/ucl-block-explorer-syncer/esg_aggregation_backend"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/logging"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/storage_handler"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer"
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/utils"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +20,9 @@ import (
 var (
 	rpcUrl                      string
 	connString                  string
-	logging                     bool
+	verboseLogging              bool
+	logLevel                    string
+	logFormat                   string
 	pollInterval                uint64
 	tipOnly                     bool
 	syncTxPool                  bool
@@ -68,8 +69,14 @@ func setRequiredFlags() {
 }
 
 func setOptionalFlags() {
-	syncerCommand.Flags().BoolVarP(&logging, "logging", "v", false,
-		"enable logging")
+	syncerCommand.Flags().BoolVarP(&verboseLogging, "logging", "v", false,
+		"enable lifecycle logging at info level; without it only warnings and errors are logged")
+
+	syncerCommand.Flags().StringVar(&logLevel, "log-level", "",
+		"log level: debug, info, warn or error; overrides --logging when set")
+
+	syncerCommand.Flags().StringVar(&logFormat, "log-format", "json",
+		"log output format: json (for log shipping) or text (for local development)")
 
 	syncerCommand.Flags().Uint64Var(&pollInterval, "poll-interval", 2000,
 		"interval in milliseconds between block polls")
@@ -144,10 +151,25 @@ func setOptionalFlags() {
 		"TCP listen address for the Prometheus /metrics endpoint; pass an empty string to disable metrics")
 
 	syncerCommand.Flags().StringVar(&otelEndpoint, "otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
-		"OTLP trace collector endpoint (e.g. http://localhost:4317); empty disables tracing")
+		"OTLP trace collector endpoint (e.g. http://localhost:4317); empty disables span "+
+			"export, but trace IDs still appear in logs")
 }
 
 func execute(cmd *cobra.Command, args []string) error {
+	// Built first so slog.SetDefault is installed before any component logs anything,
+	// including the database migrations below. Start-up failures themselves are returned
+	// to cobra rather than logged here. --log-level wins when set; otherwise --logging
+	// picks between info and warn, preserving the previous meaning of that flag.
+	level := logLevel
+	if level == "" {
+		level = "warn"
+		if verboseLogging {
+			level = "info"
+		}
+	}
+
+	logger := logging.Init(level, logFormat)
+
 	config, err := utils.LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -164,7 +186,11 @@ func execute(cmd *cobra.Command, args []string) error {
 
 	defer db.Close() //nolint:errcheck
 
-	if err := syncerdatabase.RunMigrations(db, log.Printf); err != nil {
+	migrationLog := func(format string, args ...any) {
+		logger.Info(fmt.Sprintf(format, args...), "component", "migrations")
+	}
+
+	if err := syncerdatabase.RunMigrations(db, migrationLog); err != nil {
 		return fmt.Errorf("database migration failed: %w", err)
 	}
 
@@ -196,6 +222,7 @@ func execute(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := []syncer.SyncerOption{
+		syncer.WithLogger(logger),
 		syncer.WithPollInterval(pollInterval),
 		syncer.WithBatchSize(batchSize),
 		syncer.WithMaxTxWorkers(txWorkers),
@@ -204,10 +231,6 @@ func execute(cmd *cobra.Command, args []string) error {
 		syncer.WithTransactionkWorkerStartBlock(*txwStartBlock),
 		syncer.WithMetrics(metricsAddr),
 		syncer.WithTracing(otelEndpoint),
-	}
-
-	if logging {
-		opts = append(opts, syncer.WithLogger(helper.DefaultLogger{}))
 	}
 
 	if tipOnly {
@@ -235,10 +258,7 @@ func execute(cmd *cobra.Command, args []string) error {
 	}
 
 	if dataAnchorStats {
-		backend := dataanchorbackend.NewPgDataAnchorBackend(db)
-		if logging {
-			backend = dataanchorbackend.NewPgDataAnchorBackend(db, helper.DefaultLogger{})
-		}
+		backend := dataanchorbackend.NewPgDataAnchorBackend(db, logger)
 
 		opts = append(opts,
 			syncer.WithDataAnchorStats(backend),

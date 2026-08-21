@@ -102,11 +102,3 @@ func parseUint256Data(data string) (*big.Int, error) {
 
 	return new(big.Int).SetBytes(b), nil
 }
-
-// DefaultLogger logs syncer state changes and actions to standard output using fmt formatting.
-type DefaultLogger struct{}
-
-// Log logs to standard output using fmt formatting.
-func (DefaultLogger) Log(log string) {
-	fmt.Println(log)
-}

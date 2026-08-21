@@ -2,17 +2,19 @@ package prologworker
 
 import (
 	"fmt"
-
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
+	"log/slog"
 )
 
 type PrologWorkerOption func(*PrologWorker) error
 
 // WithLogger configures the prolog worker to log its state changes and actions during its
-// lifecycle. By default, no logging is performed. You can use [helper.DefaultLogger] to log
-// to standard output using fmt formatting.
-func WithLogger(logger types.Logger) PrologWorkerOption {
+// lifecycle. Defaults to [logging.Default]: JSON at info level on stdout.
+func WithLogger(logger *slog.Logger) PrologWorkerOption {
 	return func(w *PrologWorker) error {
+		if logger == nil {
+			return fmt.Errorf("logger cannot be nil")
+		}
+
 		w.logger = logger
 
 		return nil

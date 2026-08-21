@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"reflect"
@@ -26,6 +27,9 @@ import (
 	txpoolworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/txpool_worker"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/types"
 	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/tracing"
+	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/versioning"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const emptyBlockSentinel = "notx"
@@ -210,9 +214,9 @@ type Syncer struct {
 
 	// Optional fields (settable through [NewSyncer] constructor function):
 
-	// logger records state changes and actions during the syncer's lifecycle. By default, no
-	// logging is performed.
-	logger types.Logger
+	// logger records state changes and actions during the syncer's lifecycle. Defaults to
+	// the process-wide slog logger; never silent.
+	logger *slog.Logger
 
 	// startBlockBW is the block number from which the block worker begins processing. By default, 0.
 	startBlockBW uint64
@@ -316,14 +320,12 @@ type Syncer struct {
 	// metricsAddr is the TCP listen address for the /metrics endpoint. Only used when metricsEnabled.
 	metricsAddr string
 
-	// tracingEnabled gates OpenTelemetry tracing: trace propagation on outbound node RPC.
-	// Enabled via [WithTracing] with a non-empty endpoint. By default, false.
-	tracingEnabled bool
-
-	// tracingEndpoint is the OTLP trace collector endpoint. Only used when tracingEnabled.
+	// tracingEndpoint is the OTLP trace collector endpoint, set via [WithTracing]. Empty means
+	// spans are created but not exported; tracing itself is always on, since trace IDs are
+	// what join the syncer's logs to its traces.
 	tracingEndpoint string
 
-	// tracerShutdown flushes and stops the tracer provider on shutdown. nil when tracing is off.
+	// tracerShutdown flushes and stops the tracer provider on shutdown. nil when init failed.
 	tracerShutdown func(context.Context) error
 
 	// Internal fields used by the syncer:
@@ -378,7 +380,7 @@ type Syncer struct {
 // indexed data, see [StorageHandler] for details. It cannot be nil.
 //
 // The following optional configurations are available (see their documentation for details):
-//  1. WithLogger (default: no logging)
+//  1. WithLogger (default: the process-wide slog logger)
 //  2. WithBlockWorkerStartBlock (default: 0)
 //  3. WithTransactionWorkerStartBlock (default: 0)
 //  4. WithPollInterval (default: 2000 milliseconds)
@@ -409,6 +411,10 @@ func NewSyncer(
 	}
 
 	syncer := &Syncer{
+		// Never nil: components fall back to the process default so a syncer started
+		// without WithLogger still reports what it is doing.
+		logger: slog.Default(),
+
 		rpcURL:                           rpcURL,
 		storage:                          storage,
 		maxRetries:                       1,
@@ -568,23 +574,23 @@ func (s *Syncer) Start() error {
 	}
 
 	// Set up tracing before the workers start making RPC calls, so their outbound
-	// requests carry the W3C traceparent from the very first block.
-	if s.tracingEnabled {
-		shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint)
-		if err != nil {
-			s.log("tracing init failed: %v", err)
-		} else {
-			s.tracerShutdown = shutdown
+	// requests carry the W3C traceparent from the very first block. This runs even
+	// with no collector configured: the provider then exports nothing, but spans
+	// still carry valid trace IDs for log correlation and outbound propagation.
+	shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint, versioning.Version, s.logger)
+	if err != nil {
+		s.logWarn("tracing init failed: %v", err)
+	} else {
+		s.tracerShutdown = shutdown
 
-			defer func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
 
-				if err := shutdown(ctx); err != nil {
-					s.log("tracer shutdown error: %v", err)
-				}
-			}()
-		}
+			if err := shutdown(ctx); err != nil {
+				s.logWarn("tracer shutdown error: %v", err)
+			}
+		}()
 	}
 
 	if err := s.bwHandle.bw.Start(); err != nil {
@@ -654,7 +660,7 @@ func (s *Syncer) Start() error {
 
 		select {
 		case err := <-s.bwHandle.errCh:
-			s.log("block worker encountered a fatal error: %s", err.Error())
+			s.logErr("block worker encountered a fatal error: %s", err.Error())
 
 			s.shutDownHandles()
 		case <-s.shutDownCh:
@@ -662,7 +668,7 @@ func (s *Syncer) Start() error {
 
 			select {
 			case err := <-s.bwHandle.errCh:
-				s.log("block worker encountered a fatal error: %s", err.Error())
+				s.logErr("block worker encountered a fatal error: %s", err.Error())
 			case <-s.bwHandle.doneCh:
 			}
 		}
@@ -719,7 +725,7 @@ func (s *Syncer) Start() error {
 			} else {
 				block, err = s.storage.GetBlock(currentBlock)
 				if err != nil {
-					s.log("cannot get block %v: %s", currentBlock, err.Error())
+					s.logErr("cannot get block %v: %s", currentBlock, err.Error())
 
 					shutDownFn(0)
 
@@ -739,18 +745,31 @@ func (s *Syncer) Start() error {
 			// the txs-processed counter reflects only real transactions.
 			realTxCount := len(block.Transactions)
 
+			// The block span parents every worker span for this block. It is started
+			// here rather than at the top of the iteration so it covers exactly the
+			// fan-out and the wait, which is the work the tx workers actually do.
+			blockCtx, blockSpan := tracing.Tracer().Start(context.Background(), "block.index",
+				trace.WithAttributes(
+					attribute.Int64("block.number", int64(currentBlock)),
+					attribute.Int("block.tx_count", realTxCount),
+				))
+
 			jobs := helper.CreateJobs(uint64(len(block.Transactions)), uint64(len(s.txwHandles)))
 
-			s.log("%v jobs created", len(jobs))
+			s.logCtx(blockCtx, "%v jobs created", len(jobs))
 
 			for i, job := range jobs {
 				job.Block = block
+
+				// Carries the block's trace context across the channel into the worker
+				// goroutine, which has no other way to reach it.
+				job.Ctx = blockCtx
 
 				s.txwHandles[i].jobCh <- job
 
 				s.txJobsInFlight.Add(1)
 
-				s.log("job [%v-%v] dispatched", job.From, job.To)
+				s.logCtx(blockCtx, "job [%v-%v] dispatched", job.From, job.To)
 			}
 
 			l := len(jobs)
@@ -765,7 +784,7 @@ func (s *Syncer) Start() error {
 
 					l--
 				case err := <-s.txwHandles[0].errCh:
-					s.log("transaction worker %v encountered a fatal error: %s", err.Id, err.Err.Error())
+					s.logErr("transaction worker %v encountered a fatal error: %s", err.Id, err.Err.Error())
 
 					s.txJobsInFlight.Add(-1)
 
@@ -773,6 +792,8 @@ func (s *Syncer) Start() error {
 					l--
 				}
 			}
+
+			blockSpan.End()
 
 			if errOcured != 0 {
 				shutDownFn(errOcured)
@@ -794,7 +815,7 @@ func (s *Syncer) Start() error {
 			}
 
 			if err := s.storage.InsertTransactions(block.Transactions); err != nil {
-				s.log("cannot insert transactions: %v", err.Error())
+				s.logErr("cannot insert transactions: %v", err.Error())
 
 				shutDownFn(errOcured)
 
@@ -843,7 +864,7 @@ func (s *Syncer) Start() error {
 					// meantime and has already shut down, in which case we would never receive
 					// a signal on the done channel.
 					case err := <-handle.errCh:
-						s.log("ERC-20 worker for token %s encountered a fatal error: %s",
+						s.logErr("ERC-20 worker for token %s encountered a fatal error: %s",
 							*handle.token.Symbol,
 							err.Err.Error())
 					case <-handle.doneCh:
@@ -864,7 +885,7 @@ func (s *Syncer) Start() error {
 
 				tokens, err := s.erc20Backend.GetWatchlist()
 				if err != nil {
-					s.log("failed to fetch the token watchlist: %s", err.Error())
+					s.logWarn("failed to fetch the token watchlist: %s", err.Error())
 
 					shutDownFn()
 
@@ -922,7 +943,7 @@ func (s *Syncer) Start() error {
 					// meantime and has already shut down, in which case we would never receive
 					// a signal on the done channel.
 					case err := <-handle.errCh:
-						s.log("ERC-20 worker for token %s encountered a fatal error: %s",
+						s.logErr("ERC-20 worker for token %s encountered a fatal error: %s",
 							*handle.token.Symbol,
 							err.Err.Error())
 
@@ -954,7 +975,7 @@ func (s *Syncer) Start() error {
 					if s.erc20StartFromTip {
 						tip, err := s.erc20Backend.GetTip()
 						if err != nil {
-							s.log("failed to fetch the tip of the chain: %s", err.Error())
+							s.logWarn("failed to fetch the tip of the chain: %s", err.Error())
 
 							shutDownFn()
 
@@ -972,7 +993,7 @@ func (s *Syncer) Start() error {
 							Id  string
 						}, 1))
 					if err != nil {
-						s.log("failed to create ERC-20 worker for token %s: %s",
+						s.logErr("failed to create ERC-20 worker for token %s: %s",
 							*token.Symbol,
 							err.Error())
 
@@ -982,7 +1003,7 @@ func (s *Syncer) Start() error {
 					}
 
 					if err := handle.erc20w.Start(); err != nil {
-						s.log("failed to start ERC-20 worker for token %s: %s",
+						s.logErr("failed to start ERC-20 worker for token %s: %s",
 							*token.Symbol,
 							err.Error())
 
@@ -1031,7 +1052,7 @@ func (s *Syncer) Start() error {
 					Id  string
 				})
 
-				s.log("ERC-20 worker for token %s encountered a fatal error: %s",
+				s.logErr("ERC-20 worker for token %s encountered a fatal error: %s",
 					*s.erc20wHandles[strings.Split(errVal.Id, ":")[0]].token.Symbol,
 					errVal.Err.Error())
 
@@ -1068,7 +1089,7 @@ func (s *Syncer) Start() error {
 
 			select {
 			case err := <-s.eoaawHandle.errCh:
-				s.log("EOA activity worker encountered a fatal error: %s", err.Err.Error())
+				s.logErr("EOA activity worker encountered a fatal error: %s", err.Err.Error())
 
 				s.shutDownHandles()
 			case <-s.shutDownCh:
@@ -1076,7 +1097,7 @@ func (s *Syncer) Start() error {
 
 				select {
 				case err := <-s.eoaawHandle.errCh:
-					s.log("EOA activity worker encountered a fatal error: %s", err.Err.Error())
+					s.logErr("EOA activity worker encountered a fatal error: %s", err.Err.Error())
 				case <-s.eoaawHandle.doneCh:
 				}
 			}
@@ -1099,7 +1120,7 @@ func (s *Syncer) Start() error {
 
 			select {
 			case err := <-s.esgAggregationWorkerHandle.errCh:
-				s.log("ESG aggregation worker encountered a fatal error: %s", err.Err.Error())
+				s.logErr("ESG aggregation worker encountered a fatal error: %s", err.Err.Error())
 
 				s.shutDownHandles()
 			case <-s.shutDownCh:
@@ -1107,7 +1128,7 @@ func (s *Syncer) Start() error {
 
 				select {
 				case err := <-s.esgAggregationWorkerHandle.errCh:
-					s.log("ESG aggregation worker encountered a fatal error: %s", err.Err.Error())
+					s.logErr("ESG aggregation worker encountered a fatal error: %s", err.Err.Error())
 				case <-s.esgAggregationWorkerHandle.doneCh:
 				}
 			}
@@ -1131,7 +1152,7 @@ func (s *Syncer) Start() error {
 
 			select {
 			case err := <-s.txpwHandle.errCh:
-				s.log("tx pool worker encountered a fatal error: %s", err.Error())
+				s.logErr("tx pool worker encountered a fatal error: %s", err.Error())
 
 				s.shutDownHandles()
 			case <-s.shutDownCh:
@@ -1139,7 +1160,7 @@ func (s *Syncer) Start() error {
 
 				select {
 				case err := <-s.txpwHandle.errCh:
-					s.log("tx pool worker encountered a fatal error: %s", err.Error())
+					s.logErr("tx pool worker encountered a fatal error: %s", err.Error())
 
 					s.shutDownHandles()
 				case <-s.txpwHandle.doneCh:
@@ -1161,13 +1182,11 @@ func (s *Syncer) Start() error {
 	return nil
 }
 
-// dialRPC opens an RPC client to the node. When tracing is enabled it wraps the HTTP transport
-// with otelhttp so outbound requests carry the active span's W3C traceparent.
+// dialRPC opens an RPC client to the node, wrapping the HTTP transport with otelhttp so
+// outbound requests carry the active span's W3C traceparent. This is unconditional: header
+// propagation costs nothing when no collector is configured, and it is what lets the node
+// join the syncer's trace even in environments that do not export spans themselves.
 func (s *Syncer) dialRPC(rpcURL string) (*rpc.Client, error) {
-	if !s.tracingEnabled {
-		return rpc.Dial(rpcURL)
-	}
-
 	httpClient := &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}
 
 	return rpc.DialOptions(context.Background(), rpcURL, rpc.WithHTTPClient(httpClient))
@@ -1189,7 +1208,7 @@ func (s *Syncer) startMetricsServer() *http.Server {
 		s.log("metrics endpoint listening on %s/metrics", s.metricsAddr)
 
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			s.log("metrics server stopped: %v", err)
+			s.logWarn("metrics server stopped: %v", err)
 		}
 	}()
 
@@ -1228,7 +1247,7 @@ func (s *Syncer) sampleMetrics() {
 		if headClient == nil {
 			client, err := s.dialRPC(s.rpcURL)
 			if err != nil {
-				s.log("metrics sampler: cannot dial rpc for chain head: %v", err)
+				s.logWarn("metrics sampler: cannot dial rpc for chain head: %v", err)
 
 				return
 			}
@@ -1244,7 +1263,7 @@ func (s *Syncer) sampleMetrics() {
 		cancel()
 
 		if callErr != nil {
-			s.log("metrics sampler: cannot fetch chain head: %v", callErr)
+			s.logWarn("metrics sampler: cannot fetch chain head: %v", callErr)
 
 			return
 		}
@@ -1293,12 +1312,59 @@ func (s *Syncer) shutDown() {
 	s.log("shut down")
 }
 
-func (s *Syncer) log(str string, args ...any) {
-	if s.logger != nil {
-		s.logger.Log(fmt.Sprintf("%s [syncer] %s",
-			time.Now().UTC().Format("15:04:05.000"),
-			fmt.Sprintf(str, args...)))
+// log records a lifecycle event at info level. Prefer [Syncer.logCtx] wherever a
+// context is in scope: it adds the trace and span IDs that join the line to its trace.
+func (s *Syncer) log(msg string, args ...any) {
+	s.emit(context.Background(), slog.LevelInfo, msg, args...)
+}
+
+// logCtx records a lifecycle event at info level, tagged with the active span's IDs.
+func (s *Syncer) logCtx(ctx context.Context, msg string, args ...any) {
+	s.emit(ctx, slog.LevelInfo, msg, args...)
+}
+
+// logWarn reports a recoverable problem at warn level: something failed but the
+// component is retrying or degrading rather than stopping.
+func (s *Syncer) logWarn(msg string, args ...any) {
+	s.emit(context.Background(), slog.LevelWarn, msg, args...)
+}
+
+// logWarnCtx reports a recoverable problem at warn level, tagged with the span's IDs.
+func (s *Syncer) logWarnCtx(ctx context.Context, msg string, args ...any) {
+	s.emit(ctx, slog.LevelWarn, msg, args...)
+}
+
+// logErr reports a failure at error level. Failures must not be logged through [Syncer.log]:
+// info is filtered out in normal operation, which would make the process fail silently.
+func (s *Syncer) logErr(msg string, args ...any) {
+	s.emit(context.Background(), slog.LevelError, msg, args...)
+}
+
+// logErrCtx reports a failure at error level, tagged with the active span's IDs.
+func (s *Syncer) logErrCtx(ctx context.Context, msg string, args ...any) {
+	s.emit(ctx, slog.LevelError, msg, args...)
+}
+
+// emit is the single place that formats a message and attaches the component identity
+// and trace correlation fields. The level check short-circuits before the Sprintf, which
+// matters because every call site formats eagerly.
+func (s *Syncer) emit(ctx context.Context, level slog.Level, msg string, args ...any) {
+	// Tolerate a zero-value struct: tests construct these directly, and a missing
+	// logger must not turn a log line into a nil dereference.
+	logger := s.logger
+	if logger == nil {
+		logger = slog.Default()
 	}
+
+	if !logger.Enabled(ctx, level) {
+		return
+	}
+
+	attrs := make([]any, 0, 8)
+	attrs = append(attrs, "component", "syncer")
+	attrs = append(attrs, tracing.LogFields(ctx)...)
+
+	logger.Log(ctx, level, fmt.Sprintf(msg, args...), attrs...)
 }
 
 type blockWorkerHandle struct {
@@ -1688,7 +1754,7 @@ func (s *Syncer) runDataAnchorWorkerController() {
 
 		factories, err := s.dataAnchorBackend.GetWatchlist()
 		if err != nil {
-			s.log("failed to fetch data-anchor factory watchlist: %s", err.Error())
+			s.logWarn("failed to fetch data-anchor factory watchlist: %s", err.Error())
 			shutDownFn()
 
 			return
@@ -1711,7 +1777,7 @@ func (s *Syncer) runDataAnchorWorkerController() {
 		}
 
 		if err := s.reconcileDataAnchorWorkers(factories); err != nil {
-			s.log("failed to reconcile data-anchor workers: %s", err.Error())
+			s.logWarn("failed to reconcile data-anchor workers: %s", err.Error())
 			shutDownFn()
 
 			return
@@ -1761,7 +1827,7 @@ func (s *Syncer) runDataAnchorWorkerController() {
 			continue
 		}
 
-		s.log("data-anchor worker for factory %s encountered a fatal error: %s",
+		s.logErr("data-anchor worker for factory %s encountered a fatal error: %s",
 			handle.factory.Address, workerErr.Err.Error())
 		shutDownFn()
 
@@ -1926,7 +1992,7 @@ func (s *Syncer) stopDataAnchorWorker(address string) error {
 func (s *Syncer) stopDataAnchorWorkers() {
 	for address := range s.dataAnchorwHandles {
 		if err := s.stopDataAnchorWorker(address); err != nil {
-			s.log("%s", err.Error())
+			s.logErr("%s", err.Error())
 		}
 	}
 }
@@ -1956,7 +2022,7 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 
 	currentBlock := s.eoaActivityStartBlock
 
-	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
+	processFn := func(ctx context.Context, log func(string, ...any)) (done bool, wait bool, err error) {
 		log("processing block %v", currentBlock)
 
 		participants, err := s.eoaActivityBackend.GetBlockParticipants(currentBlock)
@@ -2000,7 +2066,7 @@ func (s *Syncer) createEoaActivityWorkerHandle() (*eoaActivityWorkerHandle, erro
 			var code hexutil.Bytes
 
 			for i := int64(1); ; i++ {
-				if err := client.CallContext(context.TODO(),
+				if err := client.CallContext(ctx,
 					&code,
 					"eth_getCode",
 					addr,
@@ -2094,7 +2160,7 @@ func (s *Syncer) createESGAggregationWorkerHandle(
 		Id  string
 	}, 1)
 
-	processFn := func(log func(string, ...any)) (done bool, wait bool, err error) {
+	processFn := func(ctx context.Context, log func(string, ...any)) (done bool, wait bool, err error) {
 		return s.esgAggregationBackend.Process(ctx, log)
 	}
 

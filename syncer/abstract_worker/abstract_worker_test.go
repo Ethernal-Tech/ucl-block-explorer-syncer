@@ -1,14 +1,15 @@
 package abstractworker_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
 
 	abstractworker "github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/abstract_worker"
-	"github.com/Ethernal-Tech/ucl-block-explorer-syncer/syncer/helper"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,7 +23,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 		}, 1)
 
 		calls := 0
-		processFn := func(log func(string, ...any)) (bool, bool, error) {
+		processFn := func(ctx context.Context, log func(string, ...any)) (bool, bool, error) {
 			calls++
 
 			if calls == 3 {
@@ -38,7 +39,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 			doneCh,
 			errCh,
 			abstractworker.WithProcessInterval(200),
-			abstractworker.WithLogger(helper.DefaultLogger{}),
+			abstractworker.WithLogger(slog.Default()),
 			abstractworker.WithWorkerType("test worker"),
 			abstractworker.WithID("1"),
 		)
@@ -68,7 +69,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 		}, 1)
 
 		expectedErr := errors.New("some error")
-		processFn := func(log func(string, ...any)) (bool, bool, error) {
+		processFn := func(ctx context.Context, log func(string, ...any)) (bool, bool, error) {
 			return false, false, expectedErr
 		}
 
@@ -77,7 +78,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 			ctrlCh,
 			doneCh,
 			errCh,
-			abstractworker.WithLogger(helper.DefaultLogger{}),
+			abstractworker.WithLogger(slog.Default()),
 			abstractworker.WithWorkerType("test worker"),
 			abstractworker.WithID("1"),
 		)
@@ -108,7 +109,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 		mut := sync.RWMutex{}
 		counter := 0
 
-		processFn := func(log func(string, ...any)) (bool, bool, error) {
+		processFn := func(ctx context.Context, log func(string, ...any)) (bool, bool, error) {
 			mut.Lock()
 			defer mut.Unlock()
 
@@ -123,7 +124,7 @@ func Test_AbstractWorker_Lifecycle(t *testing.T) {
 			doneCh,
 			errCh,
 			abstractworker.WithProcessInterval(200),
-			abstractworker.WithLogger(helper.DefaultLogger{}),
+			abstractworker.WithLogger(slog.Default()),
 			abstractworker.WithWorkerType("test worker"),
 			abstractworker.WithID("1"),
 		)
