@@ -577,7 +577,7 @@ func (s *Syncer) Start() error {
 	// requests carry the W3C traceparent from the very first block. This runs even
 	// with no collector configured: the provider then exports nothing, but spans
 	// still carry valid trace IDs for log correlation and outbound propagation.
-	shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint, versioning.Version)
+	shutdown, err := tracing.Init(context.Background(), s.tracingEndpoint, versioning.Version, s.logger)
 	if err != nil {
 		s.logWarn("tracing init failed: %v", err)
 	} else {
